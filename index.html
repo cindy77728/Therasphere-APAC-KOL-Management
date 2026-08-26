@@ -300,11 +300,25 @@ textarea{resize:vertical}
 .watch-status-x.rejected{color:var(--rose);border-color:rgba(242,92,110,.26);background:rgba(242,92,110,.08)}
 .watch-actions-x{display:flex;gap:6px;flex-wrap:wrap}
 .watch-mini-note{font-size:10px;color:var(--muted);line-height:1.55;margin-top:8px}
+.auto-watch-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.auto-watch-controls{display:grid;grid-template-columns:minmax(220px,1.2fr) minmax(190px,.8fr) minmax(160px,.7fr) auto;gap:10px;align-items:end}
+.auto-watch-controls>div>select{width:100%}
+.auto-watch-progress{display:flex;align-items:center;gap:12px;margin-top:14px;padding:11px 13px;border:1px solid var(--border);border-radius:10px;background:var(--bg3)}
+.auto-watch-progress .prog{height:8px;flex:1;min-width:120px}
+.auto-watch-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.auto-result{border:1px solid var(--border);background:var(--bg3);border-radius:11px;padding:13px 15px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.auto-result-title{font-weight:800;color:var(--text);line-height:1.45}
+.auto-result-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;color:var(--muted)}
+.auto-result-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:auto}
+.auto-source-badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;border:1px solid}
+.auto-source-badge.pub{color:var(--sky);border-color:rgba(56,182,240,.28);background:rgba(56,182,240,.08)}
+.auto-source-badge.ct{color:var(--gold);border-color:rgba(240,180,41,.3);background:rgba(240,180,41,.08)}
+.auto-empty{border:1px dashed var(--bdr2);border-radius:11px;padding:18px;color:var(--muted);text-align:center;line-height:1.55;margin-top:12px}
 @media(max-width:1100px){
-  .watch-grid-x,.watch-form-x{grid-template-columns:1fr 1fr}
+  .watch-grid-x,.watch-form-x,.auto-watch-controls{grid-template-columns:1fr 1fr}
 }
 @media(max-width:720px){
-  .watch-grid-x,.watch-form-x{grid-template-columns:1fr}
+  .watch-grid-x,.watch-form-x,.auto-watch-controls,.auto-watch-results{grid-template-columns:1fr}
 }
 
 
@@ -2129,12 +2143,13 @@ function deleteWatchItemX(id){
 }
 function exportWatchCsvX(){
   const items = loadWatchItemsX();
-  const headers = ['id','date','type','kol','sourcePreset','sourceTitle','signal','action','status'];
+  const headers = ['id','date','type','kol','sourcePreset','sourceTitle','recordId','sourceUrl','signal','action','status'];
   const rows = items.map(x=>{
     const k = K(x.kolId);
     const vals = [
       x.id, x.date, x.type, k ? `${k.first} ${k.last}` : '',
-      x.sourcePreset || '', x.sourceTitle || '', x.signal || '', x.action || '', x.status || ''
+      x.sourcePreset || '', x.sourceTitle || '', x.recordId || '', x.sourceUrl || '',
+      x.signal || '', x.action || '', x.status || ''
     ];
     return vals.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
   });
@@ -2144,6 +2159,184 @@ function exportWatchCsvX(){
   const a = document.createElement('a');
   a.href = url; a.download = 'evidence_engagement_watch.csv'; a.click();
   URL.revokeObjectURL(url);
+}
+
+// Live KOL evidence search (uses the KOLs already stored in this file)
+const WATCH_AUTO_CACHE_KEY_X = 'therasphere_watch_auto_results_v1';
+let watchAutoResultsX = loadAutoWatchCacheX();
+let watchAutoErrorsX = [];
+let watchAutoRunningX = false;
+let watchAutoProgressX = {done:0,total:0,label:'Ready'};
+
+function loadAutoWatchCacheX(){
+  try{return JSON.parse(localStorage.getItem(WATCH_AUTO_CACHE_KEY_X)||'[]')||[];}catch(e){return [];}
+}
+function saveAutoWatchCacheX(){
+  try{localStorage.setItem(WATCH_AUTO_CACHE_KEY_X,JSON.stringify(watchAutoResultsX.slice(0,250)));}catch(e){}
+}
+function escWatchHtmlX(v){
+  return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function autoWatchFullNameX(k){return `${k.first||''} ${k.last||''}`.trim();}
+function autoWatchInitialsX(k){
+  return String(k.first||'').split(/[\s-]+/).filter(Boolean).map(x=>x[0]).join('');
+}
+function autoWatchTopicQueryX(){
+  return '(radioembolization OR yttrium-90 OR Y-90 OR TheraSphere OR hepatocellular carcinoma OR HCC OR embolization OR cryoablation)';
+}
+function autoWatchYearSuffixX(range){
+  const y=new Date().getFullYear();
+  if(range==='2') return ` AND ${y-1}:3000[PDAT]`;
+  if(range==='5') return ` AND ${y-4}:3000[PDAT]`;
+  if(range==='2024') return ' AND 2024:3000[PDAT]';
+  return '';
+}
+function autoWatchPubMedTermX(k,range){
+  const full=autoWatchFullNameX(k).replace(/"/g,'');
+  const authorShort=`${k.last||''} ${autoWatchInitialsX(k)}`.trim().replace(/"/g,'');
+  return `("${full}"[Author] OR "${authorShort}"[Author]) AND ${autoWatchTopicQueryX()}${autoWatchYearSuffixX(range)}`;
+}
+function autoWatchTrialTermX(k){
+  return `"${autoWatchFullNameX(k).replace(/"/g,'')}" AND ${autoWatchTopicQueryX()}`;
+}
+function autoWatchDirectUrlX(source,k,range){
+  if(source==='PubMed') return `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(autoWatchPubMedTermX(k,range))}`;
+  return `https://clinicaltrials.gov/search?term=${encodeURIComponent(autoWatchTrialTermX(k))}`;
+}
+function waitAutoWatchX(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+async function fetchAutoWatchJsonX(url,timeout=15000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeout);
+  try{
+    const response=await fetch(url,{headers:{Accept:'application/json'},signal:controller.signal});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  }finally{clearTimeout(timer);}
+}
+async function searchPubMedForKolX(k,range){
+  const term=autoWatchPubMedTermX(k,range);
+  const q=new URLSearchParams({db:'pubmed',retmode:'json',retmax:'3',sort:'pub date',term});
+  const search=await fetchAutoWatchJsonX(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?${q}`);
+  const ids=search?.esearchresult?.idlist||[];
+  if(!ids.length) return [];
+  await waitAutoWatchX(380);
+  const summary=await fetchAutoWatchJsonX(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${encodeURIComponent(ids.join(','))}`);
+  return (summary?.result?.uids||ids).map(id=>{
+    const d=summary?.result?.[id]||{};
+    const authors=(d.authors||[]).map(a=>a.name).filter(Boolean).slice(0,5).join(', ');
+    return {
+      uid:`pubmed-${id}-${k.id}`,source:'PubMed',type:'Publication',kolId:k.id,
+      date:d.pubdate||'',title:d.title||`PubMed record ${id}`,
+      detail:[d.fulljournalname||d.source||'',authors].filter(Boolean).join(' · '),
+      recordId:`PMID ${id}`,url:`https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+      signal:'Publication / author signal',
+      action:'Verify author identity and relevance, then update the KOL profile'
+    };
+  });
+}
+async function searchTrialsForKolX(k){
+  const params=new URLSearchParams({'query.term':autoWatchTrialTermX(k),format:'json',pageSize:'3'});
+  const data=await fetchAutoWatchJsonX(`https://clinicaltrials.gov/api/v2/studies?${params}`);
+  return (data?.studies||[]).map(s=>{
+    const p=s.protocolSection||{};
+    const id=p.identificationModule||{};
+    const stat=p.statusModule||{};
+    const contacts=p.contactsLocationsModule||{};
+    const officials=(contacts.overallOfficials||[]).map(x=>[x.name,x.role,x.affiliation].filter(Boolean).join(' · ')).slice(0,3).join('; ');
+    const nct=id.nctId||'';
+    return {
+      uid:`trial-${nct}-${k.id}`,source:'ClinicalTrials.gov',type:'Clinical Trial',kolId:k.id,
+      date:stat.lastUpdatePostDateStruct?.date||stat.studyFirstPostDateStruct?.date||'',
+      title:id.briefTitle||id.officialTitle||nct||'Clinical trial record',
+      detail:[nct,stat.overallStatus,officials].filter(Boolean).join(' · '),
+      recordId:nct,url:`https://clinicaltrials.gov/study/${encodeURIComponent(nct)}`,
+      signal:'Investigator / study-site signal',
+      action:'Verify investigator role, recruitment status, and study-site relevance'
+    };
+  });
+}
+function autoWatchResultMarkupX(){
+  if(!watchAutoResultsX.length&&!watchAutoErrorsX.length){
+    return `<div class="auto-empty">No live search has been run yet. Choose one KOL or all current KOLs, then click <b>Search Existing KOLs</b>.</div>`;
+  }
+  const errors=watchAutoErrorsX.length?`<div class="auto-empty" style="border-color:rgba(242,92,110,.35);text-align:left"><b>${watchAutoErrorsX.length} search${watchAutoErrorsX.length===1?'':'es'} could not be completed.</b><br>${watchAutoErrorsX.slice(0,4).map(e=>escWatchHtmlX(e)).join('<br>')}${watchAutoErrorsX.length>4?'<br>…':''}</div>`:'';
+  const cards=watchAutoResultsX.map((r,i)=>{
+    const k=K(r.kolId);
+    return `<div class="auto-result">
+      <div class="auto-result-meta"><span class="auto-source-badge ${r.source==='PubMed'?'pub':'ct'}">${escWatchHtmlX(r.source)}</span><b>${escWatchHtmlX(k?autoWatchFullNameX(k):'Unknown KOL')}</b><span>${escWatchHtmlX(r.date||'Date not listed')}</span></div>
+      <div class="auto-result-title">${escWatchHtmlX(r.title)}</div>
+      <div style="color:var(--muted);line-height:1.55">${escWatchHtmlX(r.detail||r.recordId||'')}</div>
+      <div class="auto-result-actions"><a class="btn btn-ghost btn-sm" href="${escWatchHtmlX(r.url)}" target="_blank" rel="noopener">Open source</a><button class="btn btn-ts btn-sm" onclick="addAutoResultToQueueX(${i})">＋ Add to Watch Queue</button></div>
+    </div>`;
+  }).join('');
+  return `${errors}${cards?`<div class="auto-watch-results">${cards}</div>`:''}`;
+}
+function updateAutoWatchUiX(){
+  const status=document.getElementById('autoWatchStatusX');
+  const fill=document.getElementById('autoWatchProgressFillX');
+  const btn=document.getElementById('autoWatchRunX');
+  const results=document.getElementById('autoWatchResultsX');
+  const pct=watchAutoProgressX.total?Math.round(watchAutoProgressX.done/watchAutoProgressX.total*100):0;
+  if(status) status.textContent=watchAutoProgressX.label;
+  if(fill) fill.style.width=`${pct}%`;
+  if(btn){btn.disabled=watchAutoRunningX;btn.textContent=watchAutoRunningX?'Searching…':'Search Existing KOLs';}
+  if(results) results.innerHTML=autoWatchResultMarkupX();
+}
+async function runAutoWatchSearchX(){
+  if(watchAutoRunningX) return;
+  const selected=document.getElementById('autoWatchKolX')?.value||'All';
+  const source=document.getElementById('autoWatchSourceX')?.value||'Both';
+  const range=document.getElementById('autoWatchRangeX')?.value||'5';
+  const list=selected==='All'?[...KOLS]:KOLS.filter(k=>String(k.id)===String(selected));
+  const sources=source==='Both'?['PubMed','ClinicalTrials.gov']:[source];
+  watchAutoRunningX=true;
+  watchAutoResultsX=[];
+  watchAutoErrorsX=[];
+  watchAutoProgressX={done:0,total:list.length*sources.length,label:`Starting ${list.length*sources.length} searches…`};
+  updateAutoWatchUiX();
+  for(const k of list){
+    for(const s of sources){
+      watchAutoProgressX.label=`Searching ${s}: ${autoWatchFullNameX(k)} (${watchAutoProgressX.done+1}/${watchAutoProgressX.total})`;
+      updateAutoWatchUiX();
+      try{
+        const found=s==='PubMed'?await searchPubMedForKolX(k,range):await searchTrialsForKolX(k);
+        const seen=new Set(watchAutoResultsX.map(x=>x.uid));
+        found.forEach(x=>{if(!seen.has(x.uid)){watchAutoResultsX.push(x);seen.add(x.uid);}});
+      }catch(e){
+        watchAutoErrorsX.push(`${s} · ${autoWatchFullNameX(k)}: ${e?.name==='AbortError'?'request timed out':'live search unavailable'}`);
+      }
+      watchAutoProgressX.done++;
+      updateAutoWatchUiX();
+      if(s==='PubMed') await waitAutoWatchX(380);
+    }
+  }
+  watchAutoRunningX=false;
+  watchAutoProgressX.label=`Completed · ${watchAutoResultsX.length} possible match${watchAutoResultsX.length===1?'':'es'} found for ${list.length} KOL${list.length===1?'':'s'}`;
+  saveAutoWatchCacheX();
+  updateAutoWatchUiX();
+}
+function addAutoResultToQueueX(index){
+  const r=watchAutoResultsX[index];
+  if(!r) return;
+  const items=loadWatchItemsX();
+  if(items.some(x=>x.kolId===r.kolId&&x.sourcePreset===r.source&&x.sourceTitle===r.title)){
+    alert('This result is already in the Watch Queue.');
+    return;
+  }
+  items.unshift({
+    id:nextWatchIdX(),date:r.date||new Date().toISOString().slice(0,10),type:r.type,
+    kolId:r.kolId,sourcePreset:r.source,sourceTitle:r.title,signal:r.signal,
+    action:r.action,status:'Needs Review',sourceUrl:r.url,recordId:r.recordId||''
+  });
+  saveWatchItemsX(items);
+  render();
+}
+function clearAutoWatchResultsX(){
+  if(watchAutoRunningX) return;
+  watchAutoResultsX=[];watchAutoErrorsX=[];
+  watchAutoProgressX={done:0,total:0,label:'Ready'};
+  saveAutoWatchCacheX();
+  updateAutoWatchUiX();
 }
 function renderWatchX(){
   const items = loadWatchItemsX();
@@ -2156,6 +2349,21 @@ function renderWatchX(){
       <div class="cta-row">
         <button class="btn btn-ts" onclick="exportWatchCsvX()">Export Watch CSV</button>
       </div>
+    </div>
+
+    <div class="x-panel" style="margin-bottom:16px">
+      <div class="auto-watch-head">
+        <div><div class="slabel" style="margin-bottom:5px">AUTOMATIC KOL SEARCH</div><div style="font-weight:800;color:var(--text)">Search publications and clinical trials for your ${KOLS.length} existing KOLs</div><div class="watch-mini-note">The search uses KOL names already in the Registry plus IO&amp;E-related terms. Results are possible matches and should be verified before applying them to a profile.</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="clearAutoWatchResultsX()">Clear Results</button>
+      </div>
+      <div class="auto-watch-controls">
+        <div><div class="f-label">KOLs to search</div><select id="autoWatchKolX"><option value="All">All ${KOLS.length} existing KOLs</option>${KOLS.map(k=>`<option value="${k.id}">${escWatchHtmlX(autoWatchFullNameX(k))} — ${escWatchHtmlX(k.country)}</option>`).join('')}</select></div>
+        <div><div class="f-label">Source</div><select id="autoWatchSourceX"><option value="Both">PubMed + ClinicalTrials.gov</option><option value="PubMed">PubMed only</option><option value="ClinicalTrials.gov">ClinicalTrials.gov only</option></select></div>
+        <div><div class="f-label">Publication period</div><select id="autoWatchRangeX"><option value="2">Last 2 years</option><option value="5" selected>Last 5 years</option><option value="2024">Since 2024</option><option value="All">All years</option></select></div>
+        <button class="btn btn-ts" id="autoWatchRunX" onclick="runAutoWatchSearchX()" ${watchAutoRunningX?'disabled':''}>${watchAutoRunningX?'Searching…':'Search Existing KOLs'}</button>
+      </div>
+      <div class="auto-watch-progress"><div class="prog"><div class="prog-fill" id="autoWatchProgressFillX" style="width:${watchAutoProgressX.total?Math.round(watchAutoProgressX.done/watchAutoProgressX.total*100):0}%;background:linear-gradient(90deg,var(--ts),var(--sky))"></div></div><div id="autoWatchStatusX" style="color:var(--muted);min-width:240px">${escWatchHtmlX(watchAutoProgressX.label)}</div></div>
+      <div id="autoWatchResultsX">${autoWatchResultMarkupX()}</div>
     </div>
 
     <div class="watch-grid-x">
@@ -2251,7 +2459,7 @@ function renderWatchX(){
                 <td>${x.date||''}</td>
                 <td>${x.type||''}</td>
                 <td>${k ? `${k.first} ${k.last}` : ''}</td>
-                <td><div style="font-weight:700;color:#fff">${x.sourcePreset||''}</div><div style="color:var(--muted);margin-top:3px">${x.sourceTitle||''}</div></td>
+                <td><div style="font-weight:700;color:#fff">${x.sourcePreset||''}</div><div style="color:var(--muted);margin-top:3px">${x.sourceTitle||''}</div>${x.sourceUrl?`<a href="${escWatchHtmlX(x.sourceUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:5px;color:var(--ts);font-weight:700">Open source ↗</a>`:''}</td>
                 <td>${x.signal||''}</td>
                 <td>${x.action||''}</td>
                 <td><span class="watch-status-x ${watchStatusClassX(x.status)}">${x.status||'Needs Review'}</span></td>
