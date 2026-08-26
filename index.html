@@ -308,6 +308,7 @@ textarea{resize:vertical}
 .watch-status-x{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid var(--bdr2);font-size:9px;font-weight:800}
 .watch-status-x.need{color:var(--gold);border-color:rgba(240,180,41,.26);background:rgba(240,180,41,.08)}
 .watch-status-x.verified{color:var(--ts);border-color:rgba(0,196,180,.26);background:rgba(0,196,180,.08)}
+.watch-status-x.applied{color:#17653c;border-color:#9bc9ad;background:#e7f5ec}
 .watch-status-x.rejected{color:var(--rose);border-color:rgba(242,92,110,.26);background:rgba(242,92,110,.08)}
 .watch-actions-x{display:flex;gap:6px;flex-wrap:wrap}
 .watch-mini-note{font-size:10px;color:var(--muted);line-height:1.55;margin-top:8px}
@@ -1231,6 +1232,11 @@ select option{background:#fff !important;color:var(--text) !important}
 .watch-table-x .watch-actions-x .btn{font-size:14px !important;padding:7px 11px !important}
 .watch-queue-empty{padding:28px !important;text-align:center;color:var(--muted) !important;background:#f8fafc !important}
 
+/* Final text contrast safeguard: all words are dark on the light theme. */
+#app,#app *,#moverlay,#moverlay *,#tooltip,#tooltip *{color:#172033 !important}
+#app svg text,#moverlay svg text{fill:#172033 !important}
+#tooltip{background:#fff !important;border-color:#c7d1dc !important;color:#172033 !important}
+
 </style>
 </head>
 <body>
@@ -2119,6 +2125,7 @@ function nextWatchIdX(){
   return items.length ? Math.max(...items.map(x=>x.id||0))+1 : 1;
 }
 function watchStatusClassX(v){
+  if(v==='Applied') return 'applied';
   if(v==='Verified') return 'verified';
   if(v==='Rejected') return 'rejected';
   return 'need';
@@ -2157,22 +2164,34 @@ function setWatchStatusX(id,status){
   const items = loadWatchItemsX();
   const idx = items.findIndex(x=>x.id===id);
   if(idx<0) return;
+  if(isWatchItemAppliedX(items[idx])){
+    items[idx].status = 'Applied';
+    items[idx].applied = true;
+    saveWatchItemsX(items);
+    render();
+    return;
+  }
   items[idx].status = status;
   saveWatchItemsX(items);
   render();
 }
-function applyWatchSignalX(id){
-  const items = loadWatchItemsX();
-  const idx = items.findIndex(x=>x.id===id);
-  if(idx<0) return;
-  const item = items[idx];
+function isWatchItemAppliedX(item){
+  if(item?.applied||item?.status==='Applied') return true;
   const k = K(item.kolId);
-  if(!k){
-    alert('KOL not found.');
-    return;
+  return !!(k&&item?.sourceTitle&&String(k.notes||'').includes(item.sourceTitle));
+}
+function applyWatchItemToKolX(item){
+  if(!item||item.status==='Rejected') return 'skipped';
+  if(isWatchItemAppliedX(item)){
+    item.status='Applied';item.applied=true;
+    return 'already';
   }
+  const k=K(item.kolId);
+  if(!k) return 'missing';
 
-  item.status = 'Verified';
+  item.status = 'Applied';
+  item.applied = true;
+  item.appliedAt = new Date().toISOString();
 
   const sourceLine = `[Watch] ${item.type}: ${item.sourcePreset ? item.sourcePreset + ' — ' : ''}${item.sourceTitle}`;
   if(!String(k.notes||'').includes(item.sourceTitle)){
@@ -2207,10 +2226,43 @@ function applyWatchSignalX(id){
     k.score = Math.min(100, Number(k.score||0) + 1);
   }
 
+  return 'applied';
+}
+function applyWatchSignalX(id){
+  const items = loadWatchItemsX();
+  const idx = items.findIndex(x=>x.id===id);
+  if(idx<0) return;
+  const result=applyWatchItemToKolX(items[idx]);
+  if(result==='missing'){
+    alert('KOL not found.');
+    return;
+  }
+  if(result==='skipped'){
+    alert('This item is rejected. Verify it before applying.');
+    return;
+  }
+
   saveKOLs();
   saveWatchItemsX(items);
   render();
-  alert('Signal applied to KOL profile.');
+  if(result==='already') alert('This signal was already applied.');
+  else alert('Signal applied to KOL profile.');
+}
+function applyAllWatchSignalsX(){
+  const items=loadWatchItemsX();
+  let applied=0,already=0,missing=0,skipped=0;
+  items.forEach(item=>{
+    const result=applyWatchItemToKolX(item);
+    if(result==='applied')applied++;
+    else if(result==='already')already++;
+    else if(result==='missing')missing++;
+    else skipped++;
+  });
+  saveKOLs();
+  saveWatchItemsX(items);
+  render();
+  const detail=[already?`${already} already applied`:'',skipped?`${skipped} rejected skipped`:'',missing?`${missing} missing KOL`:''].filter(Boolean).join(' · ');
+  alert(`Applied ${applied} Watch Queue signal${applied===1?'':'s'}${detail?` · ${detail}`:''}.`);
 }
 function deleteWatchItemX(id){
   const items = loadWatchItemsX().filter(x=>x.id!==id);
@@ -2439,6 +2491,7 @@ function clearAutoWatchResultsX(){
 }
 function renderWatchX(){
   const items = loadWatchItemsX();
+  const applicableItems = items.filter(x=>x.status!=='Rejected'&&!isWatchItemAppliedX(x));
   return `<div class="fade-up">
     <div class="phdr">
       <div>
@@ -2543,7 +2596,7 @@ function renderWatchX(){
     </div>
 
     <div class="x-panel">
-      <div class="slabel">WATCH QUEUE</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div><div class="slabel" style="margin-bottom:3px">WATCH QUEUE</div><div class="watch-mini-note" style="margin:0">Apply transfers verified signals into the linked KOL profiles. Rejected and previously applied items are skipped.</div></div><button class="btn btn-ts" onclick="applyAllWatchSignalsX()" ${applicableItems.length?'':'disabled'}>Apply All (${applicableItems.length})</button></div>
       <div style="overflow:auto">
         <table class="watch-table-x">
           <colgroup><col style="width:7%"><col style="width:8%"><col style="width:11%"><col style="width:25%"><col style="width:12%"><col style="width:17%"><col style="width:9%"><col style="width:11%"></colgroup>
@@ -2555,6 +2608,8 @@ function renderWatchX(){
           <tbody>
             ${items.map(x=>{
               const k = K(x.kolId);
+              const applied = isWatchItemAppliedX(x);
+              const displayStatus = applied ? 'Applied' : (x.status||'Needs Review');
               return `<tr>
                 <td>${escWatchHtmlX(x.date||'')}</td>
                 <td>${escWatchHtmlX(x.type||'')}</td>
@@ -2562,12 +2617,11 @@ function renderWatchX(){
                 <td><div style="font-weight:700;color:#fff">${escWatchHtmlX(x.sourcePreset||'')}</div><div style="color:var(--muted);margin-top:3px">${escWatchHtmlX(x.sourceTitle||'')}</div>${x.recordId?`<div style="color:var(--dim);margin-top:4px">${escWatchHtmlX(x.recordId)}</div>`:''}${x.sourceUrl?`<a href="${escWatchHtmlX(x.sourceUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:5px;color:var(--ts);font-weight:700">Open source ↗</a>`:''}</td>
                 <td>${escWatchHtmlX(x.signal||'')}</td>
                 <td>${escWatchHtmlX(x.action||'')}</td>
-                <td><span class="watch-status-x ${watchStatusClassX(x.status)}">${escWatchHtmlX(x.status||'Needs Review')}</span></td>
+                <td><span class="watch-status-x ${watchStatusClassX(displayStatus)}">${escWatchHtmlX(displayStatus)}</span></td>
                 <td>
                   <div class="watch-actions-x">
-                    <button class="btn btn-ts" onclick="applyWatchSignalX(${x.id})">Apply</button>
-                    <button class="btn btn-ghost" onclick="setWatchStatusX(${x.id},'Verified')">Verify</button>
-                    <button class="btn btn-ghost" onclick="setWatchStatusX(${x.id},'Rejected')">Reject</button>
+                    <button class="btn ${applied?'btn-ghost':'btn-ts'}" onclick="applyWatchSignalX(${x.id})" ${applied?'disabled':''}>${applied?'Applied':'Apply'}</button>
+                    ${applied?'':`<button class="btn btn-ghost" onclick="setWatchStatusX(${x.id},'Verified')">Verify</button><button class="btn btn-ghost" onclick="setWatchStatusX(${x.id},'Rejected')">Reject</button>`}
                     <button class="btn btn-ghost" onclick="deleteWatchItemX(${x.id})">Delete</button>
                   </div>
                 </td>
