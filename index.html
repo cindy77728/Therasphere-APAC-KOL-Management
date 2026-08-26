@@ -225,8 +225,19 @@ textarea{resize:vertical}
 .x-dash-card .lbl{font-family:'Space Mono',monospace;font-size:8px;color:var(--dim);letter-spacing:.13em;text-transform:uppercase;margin-bottom:8px}
 .x-dash-card .val{font-size:15px;font-weight:800;color:#fff;line-height:1.3}
 .x-dash-card .sub{font-size:10px;color:var(--muted);margin-top:6px;line-height:1.45}
+.kol-type-badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;font-size:10px;font-weight:800;border:1px solid;white-space:nowrap}
+.kol-type-badge .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.kol-axis-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:190px}
+.kol-axis-score{border:1px solid var(--border);background:var(--bg3);border-radius:10px;padding:9px 11px;text-align:center}
+.kol-axis-score b{display:block;font-size:24px;line-height:1.1;margin-bottom:3px}
+.kol-axis-score span{display:block;font-family:'Space Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.kol-segment-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.kol-segment-card{border:1px solid var(--border);background:var(--bg3);border-radius:10px;padding:12px 13px;line-height:1.5}
+.kol-segment-card b{display:block;margin-bottom:4px;color:var(--text)}
+.kol-segment-card p{color:var(--muted);font-size:10px}
 @media(max-width:1100px){.x-role-grid,.x-dash-grid,.x-legend{grid-template-columns:1fr 1fr}}
-@media(max-width:720px){.x-role-grid,.x-dash-grid,.x-legend{grid-template-columns:1fr}.x-metric{grid-template-columns:1fr}}
+@media(max-width:1100px){.kol-segment-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:720px){.x-role-grid,.x-dash-grid,.x-legend,.kol-segment-grid{grid-template-columns:1fr}.x-metric{grid-template-columns:1fr}.kol-axis-pair{width:100%}}
 
 
 /* ── ANALYTICS ENHANCEMENT PATCH ── */
@@ -1199,9 +1210,26 @@ select option{background:#fff !important;color:var(--text) !important}
 .watch-table-x th,.watch-table-x td{overflow-wrap:anywhere !important}
 @media(max-width:1450px){
   .kol-thead,.kol-row{
-    grid-template-columns:minmax(190px,1.45fr) minmax(95px,.7fr) minmax(230px,1.8fr) minmax(150px,1.1fr) 80px minmax(115px,.8fr) minmax(105px,.8fr) 80px minmax(125px,.9fr) !important;
+    grid-template-columns:minmax(180px,1.4fr) minmax(85px,.65fr) minmax(210px,1.7fr) minmax(140px,1fr) 110px minmax(105px,.75fr) minmax(145px,1fr) 70px minmax(110px,.8fr) !important;
   }
 }
+
+/* Watch Queue readability fix */
+.watch-table-x tbody td{
+  color:var(--text) !important;
+  background:#fff !important;
+  font-size:15px !important;
+  line-height:1.5 !important;
+  padding:16px 12px !important;
+  vertical-align:top !important;
+  overflow-wrap:break-word !important;
+  word-break:normal !important;
+}
+.watch-table-x tbody tr:nth-child(even) td{background:#f8fafc !important}
+.watch-table-x tbody tr:hover td{background:#edf8f6 !important}
+.watch-table-x tbody td a{color:var(--ts) !important}
+.watch-table-x .watch-actions-x .btn{font-size:14px !important;padding:7px 11px !important}
+.watch-queue-empty{padding:28px !important;text-align:center;color:var(--muted) !important;background:#f8fafc !important}
 
 </style>
 </head>
@@ -1642,6 +1670,9 @@ function openEditKOL(kolId){
         </select>
       </div>
       <div><label>Score</label><input id="ek-score" type="number" min="0" max="100" value="${Number(k.score||0)}"></div>
+      <div><label>External Influence (0–100)</label><input id="ek-influence" type="number" min="0" max="100" value="${xInfluenceScore(k)}"></div>
+      <div><label>Partnership Fit (0–100)</label><input id="ek-partnership" type="number" min="0" max="100" value="${xPartnershipFitScore(k)}"></div>
+      <div class="full" style="background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:11px 13px;color:var(--muted);line-height:1.55"><b style="color:var(--text)">Keep these scores separate.</b> Influence reflects professional reach and decision impact. Partnership Fit reflects relevant knowledge, product/therapy alignment, relationship depth, and willingness to collaborate. The displayed values are estimated from existing data until you edit and save them.</div>
       <div class="full"><label>Expertise</label><input id="ek-expertise" value="${String(k.expertise||'').replace(/"/g,'&quot;')}" placeholder="Speaker, moderator, preceptor..."></div>
       <div class="full"><label>Next Action</label><input id="ek-next" value="${String(k.nextAction||'').replace(/"/g,'&quot;')}"></div>
       <div class="full"><label>Notes</label><textarea id="ek-notes" rows="4">${String(k.notes||'').replace(/</g,'&lt;')}</textarea></div>
@@ -1671,6 +1702,8 @@ function saveEditKOL(kolId){
   k.relations = $("ek-relations").value;
   k.training = $("ek-training").value;
   k.score = Math.max(0, Math.min(100, Number($("ek-score").value || 0)));
+  k.influenceScore = xClampScore($("ek-influence").value);
+  k.partnershipFitScore = xClampScore($("ek-partnership").value);
   k.expertise = $("ek-expertise").value.trim();
   k.nextAction = $("ek-next").value.trim();
   k.notes = $("ek-notes").value.trim();
@@ -1711,11 +1744,13 @@ function openModal(mode,kolId=null){
     $("modal-body").innerHTML=`
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         ${countryFlag(kol.country)}${kol.tier?tierBadge(kol.tier):""}
+        ${kolTypeBadgeX(kol)}
         ${kol.scope?spill(kol.scope,"#9b7cf4"):""}
         ${kol.knowledge==="High"?spill("High Knowledge","#00c4b4"):""}
         ${kol.training==="Y"?spill("Training Certified","#f0b429"):""}
         ${kol.risk==="high"?spill("⚠ At Risk","#f25c6e"):""}
       </div>
+      <div style="margin-bottom:14px">${kolAxisPairX(kol)}</div>
       ${kol.expertise?`<div style="margin-bottom:12px"><div class="slabel">EXPERTISE</div><div style="font-size:11px;color:var(--muted)">${kol.expertise}</div></div>`:""}
       ${kol.specialty?`<div style="margin-bottom:12px"><div class="slabel">SPECIALTY</div><div style="font-size:11px;color:var(--muted)">${kol.specialty}</div></div>`:""}
       ${kol.notes?`<div style="margin-bottom:14px"><div class="slabel">KOL INTELLIGENCE NOTES</div>
@@ -1747,6 +1782,43 @@ let profileKOLId = 1;
 
 function xFullName(k){ return `${k.suffix ? k.suffix + " " : ""}${k.first} ${k.last}`.trim(); }
 function xNumLevel(v){ if(v==="High")return 9; if(v==="Medium")return 6; if(v==="Low")return 3; return 5; }
+
+function xClampScore(v){return Math.max(0,Math.min(100,Math.round(Number(v)||0)));}
+function xAssessedLevelScore(v){if(v==="High")return 90;if(v==="Medium")return 65;if(v==="Low")return 35;return 50;}
+function xInfluenceScore(k){
+  if(k.influenceScore!==undefined&&k.influenceScore!==null&&k.influenceScore!=='') return xClampScore(k.influenceScore);
+  const txt=`${k.expertise||''} ${(k.tags||[]).join(' ')} ${k.notes||''}`.toLowerCase();
+  const scope=k.scope==='Global'?20:k.scope==='Regional'?14:7;
+  const role=(txt.includes('speaker')?6:0)+(txt.includes('moderator')?4:0)+(txt.includes('committee')||txt.includes('society')?6:0)+(txt.includes('high influence')?7:0);
+  const evidence=txt.includes('publication')||txt.includes('data generation')||txt.includes('study')?5:0;
+  return xClampScore(Number(k.score||50)*.62+scope+role+evidence);
+}
+function xPartnershipFitScore(k){
+  if(k.partnershipFitScore!==undefined&&k.partnershipFitScore!==null&&k.partnershipFitScore!=='') return xClampScore(k.partnershipFitScore);
+  const txt=`${k.expertise||''} ${(k.tags||[]).join(' ')} ${k.notes||''} ${k.nextAction||''}`.toLowerCase();
+  let alignment=48;
+  if(/therasphere|y90|y-90|tare|radioembolization|sirt/.test(txt)) alignment+=22;
+  if(/hcc|liver|hepatic|embolization|ablation/.test(txt)) alignment+=10;
+  if(/data generation|evidence|publication|study|partnership/.test(txt)) alignment+=10;
+  if(/training|preceptor|faculty|speaker/.test(txt)) alignment+=6;
+  alignment=xClampScore(alignment);
+  return xClampScore(xAssessedLevelScore(k.knowledge)*.28+xAssessedLevelScore(k.relations)*.30+Number(k.eng||k.score||50)*.22+alignment*.20);
+}
+function xKolSegment(k){
+  const influence=xInfluenceScore(k),fit=xPartnershipFitScore(k),highI=influence>=70,highF=fit>=70;
+  if(highI&&highF)return{key:'Strategic Champion',label:'Strategic Champion',color:'#087f76',bg:'#e5f5f3',border:'#8fd7d0',desc:'High external influence and high strategic partnership fit.'};
+  if(highI)return{key:'External Influencer',label:'External Influencer',color:'#6c4cc4',bg:'#f1edff',border:'#c9baf0',desc:'High professional influence; product alignment or relationship can be developed.'};
+  if(highF)return{key:'Strategic Partner',label:'Strategic Partner',color:'#a86500',bg:'#fff4dc',border:'#e6c27b',desc:'Strong knowledge, relationship, and strategy fit; broader reach may be lower.'};
+  return{key:'Develop / Monitor',label:'Develop / Monitor',color:'#617084',bg:'#eef2f6',border:'#cbd4de',desc:'Lower scores or insufficient evidence on both dimensions.'};
+}
+function kolTypeBadgeX(k){
+  const s=xKolSegment(k);
+  return `<span class="kol-type-badge" style="color:${s.color};background:${s.bg};border-color:${s.border}" title="${s.desc}"><span class="dot"></span>${s.label}</span>`;
+}
+function kolAxisPairX(k){
+  const influence=xInfluenceScore(k),fit=xPartnershipFitScore(k);
+  return `<div class="kol-axis-pair"><div class="kol-axis-score"><b style="color:var(--violet)">${influence}</b><span>Influence</span></div><div class="kol-axis-score"><b style="color:var(--ts)">${fit}</b><span>Partnership Fit</span></div></div>`;
+}
 
 function xRoleFit(k){
   const speaker=(k.expertise||"").toLowerCase().includes("speaker");
@@ -1789,12 +1861,13 @@ function xMetric(label,value,tone=""){
 }
 
 function renderProfileX(){
-  const k=K(profileKOLId)||KOLS[0], exp=xExpertiseSignal(k), fits=xRoleFit(k), evidence=xEvidenceItems(k), inter=allInt().filter(i=>i.kolId===k.id).slice(0,5);
+  const k=K(profileKOLId)||KOLS[0], exp=xExpertiseSignal(k), fits=xRoleFit(k), evidence=xEvidenceItems(k), inter=allInt().filter(i=>i.kolId===k.id).slice(0,5), segment=xKolSegment(k);
   return `<div class="fade-up">
     <div class="phdr"><div><div class="ph-title">KOL Profile</div><div class="ph-sub">360° PROFILE · ROLE FIT · EXPERTISE SIGNAL</div></div>
       <div class="x-select-row"><select onchange="profileKOLId=parseInt(this.value);render()">${KOLS.map(x=>`<option value="${x.id}" ${x.id===k.id?"selected":""}>${xFullName(x)} — ${x.country}</option>`).join("")}</select><button class="btn btn-ts" onclick="openModal('interaction',${k.id})">＋ Log Interaction</button><button class="btn btn-ghost" onclick="openModal('detail',${k.id})">Open Detail</button><button class="btn btn-gold" onclick="openEditKOL(${k.id})">Edit KOL</button></div></div>
-    <div class="x-profile-hero"><div style="display:flex;gap:16px;align-items:flex-start;position:relative;z-index:1">${av(k,62,18)}<div style="flex:1"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">${countryFlag(k.country)}${tierBadge(k.tier)}${k.training==="Y"?spill("Training Certified","var(--gold)"):""}</div><div style="font-size:28px;font-weight:900;color:#fff;line-height:1.05;margin-bottom:6px">${xFullName(k)}</div><div style="font-size:12px;color:var(--muted);margin-bottom:8px">${k.inst||"Institution not listed"} · ${k.specialty||"Specialty not listed"}</div><div style="font-size:12px;color:var(--ts);font-weight:600">${k.nextAction||"No action defined"}</div></div><div style="text-align:center">${scoreRing(k.score,78,k.tier)}<div style="font-family:'Space Mono',monospace;font-size:9px;color:var(--dim);margin-top:6px">INFLUENCE</div></div></div></div>
-    <div class="g2" style="margin-bottom:16px"><div class="x-panel"><div class="slabel">INFLUENCE & CAPABILITY</div>${xMetric("Knowledge Level",xNumLevel(k.knowledge)*10,"")}${xMetric("Relationship Depth",xNumLevel(k.relations)*10,"lime")}${xMetric("Speaker / Education Signal",(k.expertise||"").includes("Speaker")?85:45,"violet")}${xMetric("Estimated Case Experience",Math.min(100,k.score),"gold")}${xMetric("Academic / Evidence Signal",(k.notes||"").toLowerCase().includes("data")?82:Math.round(k.score*.72),"rose")}</div>
+    <div class="x-profile-hero"><div style="display:flex;gap:16px;align-items:flex-start;position:relative;z-index:1;flex-wrap:wrap">${av(k,62,18)}<div style="flex:1;min-width:260px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">${countryFlag(k.country)}${tierBadge(k.tier)}${kolTypeBadgeX(k)}${k.training==="Y"?spill("Training Certified","var(--gold)"):""}</div><div style="font-size:28px;font-weight:900;color:#fff;line-height:1.05;margin-bottom:6px">${xFullName(k)}</div><div style="font-size:12px;color:var(--muted);margin-bottom:8px">${k.inst||"Institution not listed"} · ${k.specialty||"Specialty not listed"}</div><div style="font-size:12px;color:var(--ts);font-weight:600">${k.nextAction||"No action defined"}</div></div>${kolAxisPairX(k)}</div></div>
+    <div class="x-panel" style="margin-bottom:16px"><div class="slabel">KOL TYPE · TWO-AXIS CLASSIFICATION</div><div style="font-size:18px;font-weight:900;color:${segment.color};margin-bottom:5px">${segment.label}</div><div style="color:var(--muted);line-height:1.6">${segment.desc} Influence and Partnership Fit are assessed separately; neither score substitutes for the other.</div><div class="kol-segment-grid"><div class="kol-segment-card"><b style="color:#087f76">Strategic Champion</b><p>High on both axes. Prioritize co-creation, evidence generation, and major faculty roles.</p></div><div class="kol-segment-card"><b style="color:#6c4cc4">External Influencer</b><p>High professional reach. Focus on scientific exchange and building product alignment.</p></div><div class="kol-segment-card"><b style="color:#a86500">Strategic Partner</b><p>Strong fit and relationship. Use for focused education, advisory work, or evidence projects.</p></div><div class="kol-segment-card"><b style="color:#617084">Develop / Monitor</b><p>Build evidence, assess fit, or maintain proportionate engagement.</p></div></div></div>
+    <div class="g2" style="margin-bottom:16px"><div class="x-panel"><div class="slabel">SEPARATE ASSESSMENT DIMENSIONS</div>${xMetric("External Influence",xInfluenceScore(k),"violet")}${xMetric("Partnership Fit",xPartnershipFitScore(k),"")}${xMetric("Product Knowledge",xAssessedLevelScore(k.knowledge),"gold")}${xMetric("Relationship Depth",xAssessedLevelScore(k.relations),"lime")}${xMetric("Engagement",Math.min(100,Number(k.eng||0)),"rose")}</div>
       <div class="x-panel"><div class="slabel">EXPERTISE SIGNAL ANALYSIS</div><div class="x-panel-i" style="margin-bottom:10px"><div class="x-metric-label">PRIMARY TOPIC SIGNAL</div><div style="font-size:14px;font-weight:800;color:#fff;margin-top:5px">${exp.primary}</div></div><div class="x-panel-i" style="margin-bottom:10px"><div class="x-metric-label">SECONDARY TOPIC SIGNAL</div><div style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:5px">${exp.secondary}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><span class="x-tag ts">Confidence: ${exp.confidence}</span><span class="x-tag violet">Signal-based</span></div><div style="font-size:11px;color:var(--muted);line-height:1.65;border-top:1px solid var(--border);padding-top:10px">${exp.basis}</div></div></div>
     <div class="x-panel" style="margin-bottom:16px"><div class="slabel">ROLE FIT RECOMMENDATION</div><div class="x-role-grid">${fits.map(f=>`<div class="x-role-card ${f.res[1]}"><b>${f.role}: <span style="color:var(--ts)">${f.res[0]}</span></b><p>${f.reason}</p></div>`).join("")}</div></div>
     <div class="g2"><div class="x-panel"><div class="slabel">EVIDENCE / ENGAGEMENT BASIS</div>${evidence.map(e=>`<div class="x-evidence-item"><b>${e.type} · ${e.source}</b><p>${e.signal}</p></div>`).join("")||`<div class="x-evidence-item"><b>No evidence signal yet</b><p>Add interactions, publications, conference roles, or internal engagement records.</p></div>`}</div>
@@ -1884,11 +1957,12 @@ function xRegionPerformanceRows(){
 }
 
 function renderAnalyticsX(){
-  const topSpeaker=[...KOLS].sort((a,b)=>(b.score+((b.expertise||"").includes("Speaker")?10:0))-(a.score+((a.expertise||"").includes("Speaker")?10:0)))[0];
-  const topEvidence=[...KOLS].sort((a,b)=>(b.score+((b.notes||"").toLowerCase().includes("data")?15:0))-(a.score+((a.notes||"").toLowerCase().includes("data")?15:0)))[0];
+  const topInfluencer=[...KOLS].sort((a,b)=>xInfluenceScore(b)-xInfluenceScore(a))[0];
+  const topPartner=[...KOLS].sort((a,b)=>xPartnershipFitScore(b)-xPartnershipFitScore(a))[0];
   const follow=KOLS.find(k=>k.risk==="high")||KOLS[0];
   const countries={}; KOLS.forEach(k=>countries[k.country]=(countries[k.country]||0)+1);
   const tierCounts={}; KOLS.forEach(k=>tierCounts[k.tier||"Unclassified"]=(tierCounts[k.tier||"Unclassified"]||0)+1);
+  const segmentCounts={};KOLS.forEach(k=>{const s=xKolSegment(k).key;segmentCounts[s]=(segmentCounts[s]||0)+1;});
 
   return `<div class="fade-up">
     <div class="phdr">
@@ -1897,10 +1971,10 @@ function renderAnalyticsX(){
     </div>
 
     <div class="x-dash-grid">
-      <div class="x-dash-card"><div class="lbl">TOP SPEAKER CANDIDATE</div><div class="val">${xFullName(topSpeaker)}</div><div class="sub">${countryText(topSpeaker.country,700)} · ${topSpeaker.expertise||"Speaker signal inferred"}</div></div>
-      <div class="x-dash-card"><div class="lbl">TOP EVIDENCE PARTNER</div><div class="val">${xFullName(topEvidence)}</div><div class="sub">${countryText(topEvidence.country,700)} · ${topEvidence.nextAction}</div></div>
+      <div class="x-dash-card"><div class="lbl">TOP EXTERNAL INFLUENCE</div><div class="val">${xFullName(topInfluencer)}</div><div class="sub">${countryText(topInfluencer.country,700)} · Influence ${xInfluenceScore(topInfluencer)}/100</div></div>
+      <div class="x-dash-card"><div class="lbl">TOP PARTNERSHIP FIT</div><div class="val">${xFullName(topPartner)}</div><div class="sub">${countryText(topPartner.country,700)} · Partnership Fit ${xPartnershipFitScore(topPartner)}/100</div></div>
       <div class="x-dash-card"><div class="lbl">FOLLOW-UP NEEDED</div><div class="val">${xFullName(follow)}</div><div class="sub">${follow.risk==="high"?"Competitor risk / urgent re-engagement":follow.nextAction}</div></div>
-      <div class="x-dash-card"><div class="lbl">PRIMARY KOL COVERAGE</div><div class="val">${KOLS.filter(k=>k.tier==="Primary KOL").length} / ${KOLS.length}</div><div class="sub">Primary KOLs across APAC markets</div></div>
+      <div class="x-dash-card"><div class="lbl">STRATEGIC CHAMPIONS</div><div class="val">${segmentCounts['Strategic Champion']||0} / ${KOLS.length}</div><div class="sub">High influence and high partnership fit</div></div>
     </div>
 
     <div class="g2" style="margin-bottom:16px">
@@ -1909,15 +1983,16 @@ function renderAnalyticsX(){
         ${Object.entries(countries).sort((a,b)=>b[1]-a[1]).map(([c,n])=>{const m=COUNTRY_META[c]||{color:"var(--ts)",flag:"🌏"};return `<div class="x-metric"><div class="x-metric-label" style="color:${m.color} !important">${c}</div><div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;color:${m.color} !important;width:28px">${n}</span><div class="x-bar" style="flex:1"><div class="x-bar-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${m.color}"></div></div></div></div></div>`}).join("")}
       </div>
       <div class="x-panel">
-        <div class="slabel">TIER DISTRIBUTION</div>
-        ${Object.entries(tierCounts).sort((a,b)=>b[1]-a[1]).map(([t,n])=>{const meta=TIER_META[t]||{color:"var(--dim)"};return `<div class="x-metric"><div class="x-metric-label">${t}</div><div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;color:${meta.color};width:28px">${n}</span><div class="x-bar" style="flex:1"><div class="x-bar-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${meta.color}"></div></div></div></div></div>`}).join("")}
+        <div class="slabel">KOL TYPE DISTRIBUTION</div>
+        ${Object.entries(segmentCounts).sort((a,b)=>b[1]-a[1]).map(([t,n])=>{const sample=KOLS.find(k=>xKolSegment(k).key===t),meta=sample?xKolSegment(sample):{color:"var(--dim)"};return `<div class="x-metric"><div class="x-metric-label">${t}</div><div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;color:${meta.color};width:28px">${n}</span><div class="x-bar" style="flex:1"><div class="x-bar-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${meta.color}"></div></div></div></div></div>`}).join("")}
       </div>
     </div>
 
     <div class="x-panel" style="margin-bottom:16px">
       <div class="slabel">KOL QUADRANT MATRIX</div>
       <div class="x-quad-wrap">${renderQuadrantX()}</div>
-      <div class="x-quad-note">Hover over a KOL dot to show the physician name, then click the node to open the KOL Profile.</div>
+      <div class="x-quad-note">External Influence and Partnership Fit are independent. A score of 70 is the default high/low threshold. Hover over a dot to show the physician name, then click it to open the KOL Profile.</div>
+      <div class="kol-segment-grid"><div class="kol-segment-card"><b style="color:#087f76">A · Strategic Champion</b><p>High influence + high partnership fit.</p></div><div class="kol-segment-card"><b style="color:#a86500">B · Strategic Partner</b><p>Lower influence + high partnership fit.</p></div><div class="kol-segment-card"><b style="color:#6c4cc4">C · External Influencer</b><p>High influence + lower partnership fit.</p></div><div class="kol-segment-card"><b style="color:#617084">D · Develop / Monitor</b><p>Lower or unassessed on both axes.</p></div></div>
     </div>
 
     <div class="g2">
@@ -1933,15 +2008,14 @@ function renderAnalyticsX(){
   </div>`;
 }
 function renderQuadrantX(){
-  const pts = KOLS.filter(k=>k.tier==="Primary KOL"||k.tier==="Rising Star"||k.score>=74).slice(0,12);
+  const pts = [...KOLS];
   const left=100, top=58, width=760, height=430;
 
   const nodes = pts.map(k=>{
-    const know=(xNumLevel(k.knowledge)*10 + Math.min(k.score,100))/2;
-    const rel=(xNumLevel(k.relations)*10 + Math.min(k.eng||k.score,100))/2;
-    const x=left+(know/100)*width;
-    const y=top+height-(rel/100)*height;
-    const color=TIER_META[k.tier]?.color || COUNTRY_META[k.country]?.color || "var(--ts)";
+    const influence=xInfluenceScore(k),fit=xPartnershipFitScore(k);
+    const x=left+(influence/100)*width;
+    const y=top+height-(fit/100)*height;
+    const color=xKolSegment(k).color;
     const name = xFullName(k);
     const w = Math.max(108, Math.min(196, name.length * 7.2));
     return `<g class="x-node-group" onclick="profileKOLId=${k.id};setTab('profilex')">
@@ -1950,16 +2024,18 @@ function renderQuadrantX(){
         <rect class="x-node-label" x="${x-w/2}" y="${y-36}" width="${w}" height="24" rx="8"/>
         <text class="x-node-text" x="${x}" y="${y-20}" text-anchor="middle">${name}</text>
       </g>
-      <title>${name} · ${k.country}</title>
+      <title>${name} · ${k.country} · Influence ${influence} · Partnership Fit ${fit}</title>
     </g>`;
   }).join("");
 
   return `<svg class="x-quad" viewBox="0 0 980 620">
     <!-- quadrant blocks -->
-    <rect x="${left}" y="${top}" width="${width/2}" height="${height/2}" rx="22" fill="rgba(155,124,244,.22)"/>
-    <rect x="${left+width/2}" y="${top}" width="${width/2}" height="${height/2}" rx="22" fill="rgba(79,140,209,.20)"/>
-    <rect x="${left}" y="${top+height/2}" width="${width/2}" height="${height/2}" rx="22" fill="rgba(240,180,41,.22)"/>
-    <rect x="${left+width/2}" y="${top+height/2}" width="${width/2}" height="${height/2}" rx="22" fill="rgba(86,168,120,.16)"/>
+    <rect x="${left}" y="${top}" width="${width*.7}" height="${height*.3}" rx="22" fill="rgba(240,180,41,.18)"/>
+    <rect x="${left+width*.7}" y="${top}" width="${width*.3}" height="${height*.3}" rx="22" fill="rgba(8,127,118,.15)"/>
+    <rect x="${left}" y="${top+height*.3}" width="${width*.7}" height="${height*.7}" rx="22" fill="rgba(97,112,132,.12)"/>
+    <rect x="${left+width*.7}" y="${top+height*.3}" width="${width*.3}" height="${height*.7}" rx="22" fill="rgba(108,76,196,.16)"/>
+    <line class="x-q-divider" x1="${left+width*.7}" y1="${top}" x2="${left+width*.7}" y2="${top+height}"/>
+    <line class="x-q-divider" x1="${left}" y1="${top+height*.3}" x2="${left+width}" y2="${top+height*.3}"/>
 
     <!-- axis lines -->
     <line class="x-q-baseline" x1="${left}" y1="${top+height}" x2="${left+width+36}" y2="${top+height}"/>
@@ -1975,21 +2051,21 @@ function renderQuadrantX(){
     <text class="x-q-axis-small" x="${left+18}" y="${top-18}" text-anchor="start">HIGH</text>
 
     <!-- axis titles -->
-    <text class="x-q-axis-label" x="${left+width/2}" y="${top+height+62}" text-anchor="middle">Level of Product Knowledge</text>
-    <text class="x-q-axis-label" x="18" y="${top+height/2}" text-anchor="middle" transform="rotate(-90 18 ${top+height/2})">Level of Relationship / Advocacy</text>
+    <text class="x-q-axis-label" x="${left+width/2}" y="${top+height+62}" text-anchor="middle">External Influence</text>
+    <text class="x-q-axis-label" x="18" y="${top+height/2}" text-anchor="middle" transform="rotate(-90 18 ${top+height/2})">Strategic Partnership Fit</text>
 
     <!-- quadrant letters + helper text -->
-    <text class="x-q-big" x="${left+width*.25}" y="${top+height*.25}" text-anchor="middle" dominant-baseline="middle">B</text>
-    <text class="x-q-cap" x="${left+width*.25}" y="${top+height*.25+58}" text-anchor="middle">Educate / keep informed</text>
+    <text class="x-q-big" x="${left+width*.35}" y="${top+height*.15}" text-anchor="middle" dominant-baseline="middle">B</text>
+    <text class="x-q-cap" x="${left+width*.35}" y="${top+height*.15+50}" text-anchor="middle">Strategic Partner</text>
 
-    <text class="x-q-big" x="${left+width*.75}" y="${top+height*.25}" text-anchor="middle" dominant-baseline="middle">A</text>
-    <text class="x-q-cap" x="${left+width*.75}" y="${top+height*.25+58}" text-anchor="middle">Deepen advocacy</text>
+    <text class="x-q-big" x="${left+width*.85}" y="${top+height*.15}" text-anchor="middle" dominant-baseline="middle">A</text>
+    <text class="x-q-cap" x="${left+width*.85}" y="${top+height*.15+50}" text-anchor="middle">Strategic Champion</text>
 
-    <text class="x-q-big" x="${left+width*.25}" y="${top+height*.75}" text-anchor="middle" dominant-baseline="middle">D</text>
-    <text class="x-q-cap" x="${left+width*.25}" y="${top+height*.75+58}" text-anchor="middle">Assess knowledge / partnership</text>
+    <text class="x-q-big" x="${left+width*.35}" y="${top+height*.65}" text-anchor="middle" dominant-baseline="middle">D</text>
+    <text class="x-q-cap" x="${left+width*.35}" y="${top+height*.65+58}" text-anchor="middle">Develop / Monitor</text>
 
-    <text class="x-q-big" x="${left+width*.75}" y="${top+height*.75}" text-anchor="middle" dominant-baseline="middle">C</text>
-    <text class="x-q-cap" x="${left+width*.75}" y="${top+height*.75+58}" text-anchor="middle">Assess advocacy potential</text>
+    <text class="x-q-big" x="${left+width*.85}" y="${top+height*.65}" text-anchor="middle" dominant-baseline="middle">C</text>
+    <text class="x-q-cap" x="${left+width*.85}" y="${top+height*.65+58}" text-anchor="middle">External Influencer</text>
 
     ${nodes}
   </svg>`;
@@ -2319,16 +2395,39 @@ function addAutoResultToQueueX(index){
   const r=watchAutoResultsX[index];
   if(!r) return;
   const items=loadWatchItemsX();
-  if(items.some(x=>x.kolId===r.kolId&&x.sourcePreset===r.source&&x.sourceTitle===r.title)){
-    alert('This result is already in the Watch Queue.');
-    return;
+  const duplicate=items.some(x=>x.kolId===r.kolId&&x.sourcePreset===r.source&&x.sourceTitle===r.title);
+  if(!duplicate){
+    items.unshift({
+      id:nextWatchIdX(),date:r.date||new Date().toISOString().slice(0,10),type:r.type,
+      kolId:r.kolId,sourcePreset:r.source,sourceTitle:r.title,signal:r.signal,
+      action:r.action,status:'Needs Review',sourceUrl:r.url,recordId:r.recordId||''
+    });
+    saveWatchItemsX(items);
   }
-  items.unshift({
-    id:nextWatchIdX(),date:r.date||new Date().toISOString().slice(0,10),type:r.type,
-    kolId:r.kolId,sourcePreset:r.source,sourceTitle:r.title,signal:r.signal,
-    action:r.action,status:'Needs Review',sourceUrl:r.url,recordId:r.recordId||''
+  watchAutoResultsX.splice(index,1);
+  saveAutoWatchCacheX();
+  watchAutoProgressX.label=duplicate?'Already in Watch Queue · result removed':`Added to Watch Queue · ${watchAutoResultsX.length} result${watchAutoResultsX.length===1?'':'s'} remaining`;
+  render();
+}
+function addAllAutoResultsToQueueX(){
+  if(!watchAutoResultsX.length) return;
+  const items=loadWatchItemsX();
+  let nextId=items.length?Math.max(...items.map(x=>Number(x.id)||0))+1:1;
+  let added=0,duplicates=0;
+  watchAutoResultsX.forEach(r=>{
+    const duplicate=items.some(x=>x.kolId===r.kolId&&x.sourcePreset===r.source&&x.sourceTitle===r.title);
+    if(duplicate){duplicates++;return;}
+    items.unshift({
+      id:nextId++,date:r.date||new Date().toISOString().slice(0,10),type:r.type,
+      kolId:r.kolId,sourcePreset:r.source,sourceTitle:r.title,signal:r.signal,
+      action:r.action,status:'Needs Review',sourceUrl:r.url,recordId:r.recordId||''
+    });
+    added++;
   });
   saveWatchItemsX(items);
+  watchAutoResultsX=[];
+  saveAutoWatchCacheX();
+  watchAutoProgressX.label=`Added ${added} result${added===1?'':'s'} to Watch Queue${duplicates?` · ${duplicates} duplicate${duplicates===1?'':'s'} skipped`:''}`;
   render();
 }
 function clearAutoWatchResultsX(){
@@ -2354,7 +2453,7 @@ function renderWatchX(){
     <div class="x-panel" style="margin-bottom:16px">
       <div class="auto-watch-head">
         <div><div class="slabel" style="margin-bottom:5px">AUTOMATIC KOL SEARCH</div><div style="font-weight:800;color:var(--text)">Search publications and clinical trials for your ${KOLS.length} existing KOLs</div><div class="watch-mini-note">The search uses KOL names already in the Registry plus IO&amp;E-related terms. Results are possible matches and should be verified before applying them to a profile.</div></div>
-        <button class="btn btn-ghost btn-sm" onclick="clearAutoWatchResultsX()">Clear Results</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${watchAutoResultsX.length?`<button class="btn btn-ts btn-sm" onclick="addAllAutoResultsToQueueX()">＋ Add All to Watch Queue (${watchAutoResultsX.length})</button>`:''}<button class="btn btn-ghost btn-sm" onclick="clearAutoWatchResultsX()">Clear Results</button></div>
       </div>
       <div class="auto-watch-controls">
         <div><div class="f-label">KOLs to search</div><select id="autoWatchKolX"><option value="All">All ${KOLS.length} existing KOLs</option>${KOLS.map(k=>`<option value="${k.id}">${escWatchHtmlX(autoWatchFullNameX(k))} — ${escWatchHtmlX(k.country)}</option>`).join('')}</select></div>
@@ -2447,6 +2546,7 @@ function renderWatchX(){
       <div class="slabel">WATCH QUEUE</div>
       <div style="overflow:auto">
         <table class="watch-table-x">
+          <colgroup><col style="width:7%"><col style="width:8%"><col style="width:11%"><col style="width:25%"><col style="width:12%"><col style="width:17%"><col style="width:9%"><col style="width:11%"></colgroup>
           <thead>
             <tr>
               <th>Date</th><th>Type</th><th>KOL</th><th>Source</th><th>Signal</th><th>Action</th><th>Status</th><th>Controls</th>
@@ -2456,13 +2556,13 @@ function renderWatchX(){
             ${items.map(x=>{
               const k = K(x.kolId);
               return `<tr>
-                <td>${x.date||''}</td>
-                <td>${x.type||''}</td>
-                <td>${k ? `${k.first} ${k.last}` : ''}</td>
-                <td><div style="font-weight:700;color:#fff">${x.sourcePreset||''}</div><div style="color:var(--muted);margin-top:3px">${x.sourceTitle||''}</div>${x.sourceUrl?`<a href="${escWatchHtmlX(x.sourceUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:5px;color:var(--ts);font-weight:700">Open source ↗</a>`:''}</td>
-                <td>${x.signal||''}</td>
-                <td>${x.action||''}</td>
-                <td><span class="watch-status-x ${watchStatusClassX(x.status)}">${x.status||'Needs Review'}</span></td>
+                <td>${escWatchHtmlX(x.date||'')}</td>
+                <td>${escWatchHtmlX(x.type||'')}</td>
+                <td>${escWatchHtmlX(k ? `${k.first} ${k.last}` : '')}</td>
+                <td><div style="font-weight:700;color:#fff">${escWatchHtmlX(x.sourcePreset||'')}</div><div style="color:var(--muted);margin-top:3px">${escWatchHtmlX(x.sourceTitle||'')}</div>${x.recordId?`<div style="color:var(--dim);margin-top:4px">${escWatchHtmlX(x.recordId)}</div>`:''}${x.sourceUrl?`<a href="${escWatchHtmlX(x.sourceUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:5px;color:var(--ts);font-weight:700">Open source ↗</a>`:''}</td>
+                <td>${escWatchHtmlX(x.signal||'')}</td>
+                <td>${escWatchHtmlX(x.action||'')}</td>
+                <td><span class="watch-status-x ${watchStatusClassX(x.status)}">${escWatchHtmlX(x.status||'Needs Review')}</span></td>
                 <td>
                   <div class="watch-actions-x">
                     <button class="btn btn-ts" onclick="applyWatchSignalX(${x.id})">Apply</button>
@@ -2473,6 +2573,7 @@ function renderWatchX(){
                 </td>
               </tr>`;
             }).join('')}
+            ${items.length?'':`<tr><td class="watch-queue-empty" colspan="8">No items in the Watch Queue yet. Run an automatic search and add individual results, or use Add All to Watch Queue.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2485,7 +2586,7 @@ function renderWatchX(){
 // TAB & RENDER STATE
 // ════════════════════════════════════════════════
 let activeTab="overview", detailKOL=null;
-let listFilters={tier:"All",country:"All",sort:"score",search:""};
+let listFilters={tier:"All",country:"All",type:"All",sort:"score",search:""};
 let intFilters={kol:"All",outcome:"All"};
 
 function setTab(t){
@@ -2611,6 +2712,7 @@ function renderOverview(){
             <div style="flex:1;min-width:0">
               <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:2px">${k.suffix?k.suffix+" ":""}${k.first} ${k.last}</div>
               <div style="font-size:9px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${k.inst||k.country}</div>
+              <div style="margin-top:5px">${kolTypeBadgeX(k)}</div>
             </div>
             <div style="flex-shrink:0;text-align:right">
               <div style="font-size:9px;font-family:'Space Mono',monospace;color:${cm.color}">${k.country}</div>
@@ -2654,14 +2756,15 @@ function renderRegistry(){
   let filtered=[...KOLS].filter(k=>
     (listFilters.tier==="All"||k.tier===listFilters.tier)&&
     (listFilters.country==="All"||k.country===listFilters.country)&&
+    (listFilters.type==="All"||xKolSegment(k).key===listFilters.type)&&
     (listFilters.search===""||
       `${k.first} ${k.last}`.toLowerCase().includes(listFilters.search.toLowerCase())||
       (k.inst||"").toLowerCase().includes(listFilters.search.toLowerCase())||
       k.country.toLowerCase().includes(listFilters.search.toLowerCase())||
       (k.specialty||"").toLowerCase().includes(listFilters.search.toLowerCase()))
-  ).sort((a,b)=>b.score-a.score);
+  ).sort((a,b)=>(xInfluenceScore(b)+xPartnershipFitScore(b))-(xInfluenceScore(a)+xPartnershipFitScore(a)));
 
-  const cols="230px 120px minmax(260px,1.9fr) 180px 90px 130px 120px 90px 170px";
+  const cols="230px 110px minmax(240px,1.7fr) 160px 130px 125px 170px 90px 150px";
   return`<div class="fade-up">
     <div class="phdr">
       <div><div class="ph-title">KOL Registry</div><div class="ph-sub">${filtered.length} OF 27 KOLs · THERASPHERE APAC 2025</div></div>
@@ -2677,13 +2780,17 @@ function renderRegistry(){
       <select onchange="listFilters.country=this.value;render()" style="font-size:11px">
         ${countries.map(c=>`<option value="${c}"${listFilters.country===c?" selected":""}>${c==="All"?"All Countries":c}</option>`).join("")}
       </select>
+      <select onchange="listFilters.type=this.value;render()" style="font-size:11px">
+        ${["All","Strategic Champion","External Influencer","Strategic Partner","Develop / Monitor"].map(t=>`<option value="${t}"${listFilters.type===t?" selected":""}>${t==="All"?"All KOL Types":t}</option>`).join("")}
+      </select>
       <div style="margin-left:auto;font-size:10px;color:var(--dim)">${filtered.length} results</div>
     </div>
+    <div class="watch-mini-note" style="margin:-4px 0 14px"><b style="color:var(--text)">Tier and KOL Type are different:</b> Tier is your prioritization level; KOL Type separates external influence from strategic partnership fit.</div>
     <!-- Table header -->
     <div class="kol-thead" style="grid-template-columns:${cols}">
       <div>NAME</div><div>COUNTRY</div><div>INSTITUTION</div><div>SPECIALTY</div>
-      <div style="text-align:center">SCORE</div><div style="text-align:center">TIER</div>
-      <div style="text-align:center">SCOPE</div><div style="text-align:center">RISK</div><div>ACTIONS</div>
+      <div style="text-align:center">INFLUENCE / FIT</div><div style="text-align:center">TIER</div>
+      <div style="text-align:center">KOL TYPE</div><div style="text-align:center">RISK</div><div>ACTIONS</div>
     </div>
     ${filtered.map(k=>{
       const cm=COUNTRY_META[k.country]||{color:"#888",flag:"🌏"};
@@ -2700,12 +2807,9 @@ function renderRegistry(){
         <div><span style="font-size:14px;color:${cm.color};font-weight:700">${k.country}</span></div>
         <div style="font-size:12px;color:var(--muted);white-space:normal;overflow:visible;max-width:none;line-height:1.35" title="${k.inst||""}">${k.inst||"—"}</div>
         <div style="font-size:10px;color:var(--muted)">${k.specialty||"—"}</div>
-        <div style="text-align:center">
-          <div style="font-size:20px;font-weight:900;color:${tm.color||"#888"}">${k.score}</div>
-          <div style="font-size:9px;color:var(--ts)">+${k.trend}%</div>
-        </div>
+        <div style="display:flex;justify-content:center;align-items:center;gap:10px;text-align:center"><div><div style="font-size:20px;font-weight:900;color:var(--violet)">${xInfluenceScore(k)}</div><div style="font-size:8px;color:var(--dim)">INF</div></div><div style="color:var(--bdr2)">/</div><div><div style="font-size:20px;font-weight:900;color:var(--ts)">${xPartnershipFitScore(k)}</div><div style="font-size:8px;color:var(--dim)">FIT</div></div></div>
         <div style="display:flex;justify-content:center;align-items:center;flex-wrap:wrap;text-align:center;padding:0 4px">${k.tier?tierBadge(k.tier):`<span style="color:var(--dim);font-size:12px">—</span>`}</div>
-        <div style="display:flex;justify-content:center;align-items:center;flex-wrap:wrap;text-align:center;padding:0 4px">${k.scope?spill(k.scope,"#9b7cf4"):`<span style="color:var(--dim);font-size:12px">—</span>`}</div>
+        <div style="display:flex;justify-content:center;align-items:center;flex-wrap:wrap;text-align:center;padding:0 4px">${kolTypeBadgeX(k)}</div>
         <div style="text-align:center"><span style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:5px;background:${rc}14;color:${rc}">${RISK_L[k.risk]}</span></div>
         <div class="row-acts" onclick="event.stopPropagation()">
           <button class="btn btn-ts btn-xs" onclick="openModal('interaction',${k.id})">＋</button>
@@ -2740,6 +2844,7 @@ function renderKolDetail(k){
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
             <div style="font-size:26px;font-weight:900;color:#fff">${k.suffix?k.suffix+" ":""}${k.first} ${k.last}</div>
             ${k.tier?tierBadge(k.tier):""}
+            ${kolTypeBadgeX(k)}
             ${countryFlag(k.country)}
             <span style="background:${rc}14;border:1px solid ${rc}35;color:${rc};border-radius:4px;padding:2px 8px;font-size:9px;font-weight:600">${RISK_L[k.risk]}</span>
           </div>
@@ -2752,11 +2857,7 @@ function renderKolDetail(k){
             ${k.training==="Y"?`<span style="background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.3);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--gold)">★ Training Certified</span>`:""}
           </div>
         </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div style="font-family:'Space Mono',monospace;font-size:8px;color:var(--dim);margin-bottom:3px">KOL SCORE</div>
-          <div style="font-size:52px;font-weight:900;color:${tm.color||"#00c4b4"};line-height:1">${k.score}</div>
-          <div style="font-size:11px;color:var(--ts)">+${k.trend}% QoQ</div>
-        </div>
+        <div style="text-align:right;flex-shrink:0">${kolAxisPairX(k)}</div>
       </div>
       <div class="cta-row" style="margin-top:16px">
         <button class="btn btn-rose btn-sm" onclick="openModal('interaction',${k.id})">📅 Schedule Meeting</button>
@@ -2779,9 +2880,9 @@ function renderKolDetail(k){
 
     <div class="g2">
       <!-- Stats -->
-      ${[["🎯","KOL Score",k.score,tm.color||"#00c4b4"],
-         ["📊","Influence Trend","+"+k.trend+"%","var(--ts)"],
-         ["🏥","Engagement",k.eng+"/100","var(--violet)"],
+      ${[["🎯","External Influence",xInfluenceScore(k),"var(--violet)"],
+         ["🤝","Partnership Fit",xPartnershipFitScore(k),"var(--ts)"],
+         ["🏥","Relationship",k.relations||"Not assessed","var(--rose)"],
          ["🌏","Market Coverage",k.scope||"Regional","var(--gold)"]
         ].map(([ic,lb,vl,co])=>`<div class="card-sm" style="display:flex;align-items:center;gap:12px">
         <span style="font-size:22px">${ic}</span>
@@ -2791,7 +2892,7 @@ function renderKolDetail(k){
 
       <!-- Influence trend -->
       <div class="card span2">
-        <div class="slabel">INFLUENCE TREND — 7 QUARTERS</div>
+        <div class="slabel">LEGACY COMPOSITE SCORE TREND — 7 QUARTERS</div>
         <div style="display:flex;align-items:flex-end;gap:8px;height:64px">
           ${influence.map((v,i)=>{const max=Math.max(...influence),bh=Math.round((v/max)*56),isL=i===influence.length-1;return`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
             <div style="font-size:8px;color:${isL?tm.color||"var(--ts)":"var(--dim)"}">${v}</div>
