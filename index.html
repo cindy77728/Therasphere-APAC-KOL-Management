@@ -16019,8 +16019,16 @@ const PRODUCT_PROFILE_STORAGE_KEY='ioe_apac_product_profiles_v1';
 const VOLUME_LOG_STORAGE_KEY='ioe_apac_procedure_volume_v1';
 let productProfileOverrides={};
 let userVolumeLogs=[];
+let interactionCacheX=null;
+let importedVolumeCacheX=null;
+const productProfileCacheX=new Map();
 try{productProfileOverrides=JSON.parse(localStorage.getItem(PRODUCT_PROFILE_STORAGE_KEY)||'{}')||{};}catch(e){productProfileOverrides={};}
 try{const saved=JSON.parse(localStorage.getItem(VOLUME_LOG_STORAGE_KEY)||'[]');if(Array.isArray(saved))userVolumeLogs=saved;}catch(e){userVolumeLogs=[];}
+function resetProductMatrixCacheX(){
+  interactionCacheX=null;
+  importedVolumeCacheX=null;
+  productProfileCacheX.clear();
+}
 function xNorm(v){return String(v??'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();}
 function xInteractionKey(i){return [i.kolId,i.date||i.year||'',xNorm(i.type),xNorm(i.notes)].join('|');}
 function interactionProductTags(i){
@@ -16033,6 +16041,7 @@ function interactionProductTags(i){
   return['IO&E'];
 }
 function allInt(){
+  if(interactionCacheX)return interactionCacheX;
   const stamp=i=>{
     const d=new Date(i.date||`${i.year||1900}-12-31`);
     return Number.isNaN(d.getTime())?0:d.getTime();
@@ -16048,11 +16057,13 @@ function allInt(){
       prior.points=Math.max(Number(prior.points||0),Number(i.points||0));
     }
   });
-  return[...merged.values()].sort((a,b)=>stamp(b)-stamp(a));
+  interactionCacheX=[...merged.values()].sort((a,b)=>stamp(b)-stamp(a));
+  return interactionCacheX;
 }
 function interactionProductLabelX(i){const tags=interactionProductTags(i);return tags.join(' + ');}
 function therapyEngagementsX(kolId,therapy){return allInt().filter(i=>i.kolId===kolId&&interactionProductTags(i).includes(therapy));}
 function importedVolumeLogsX(){
+  if(importedVolumeCacheX)return importedVolumeCacheX;
   const logs=[];
   KOLS.forEach(k=>{
     const text=String(k.notes||'');
@@ -16066,7 +16077,8 @@ function importedVolumeLogsX(){
       logs.push({id:`IMP-${k.id}-${n}`,kolId:k.id,therapy,label,scope:/account|center/i.test(signal)?'Account':'Physician',period:'Imported observation',trend,source:'Workbook · Imported Observations',confidence:'Needs validation',imported:true});
     });
   });
-  return logs;
+  importedVolumeCacheX=logs;
+  return importedVolumeCacheX;
 }
 function allVolumeLogsX(){return[...importedVolumeLogsX(),...userVolumeLogs];}
 function latestVolumeX(kolId,therapy){return allVolumeLogsX().filter(v=>v.kolId===kolId&&(v.therapy===therapy||v.therapy==='IO&E')).at(-1)||null;}
@@ -16091,7 +16103,13 @@ function defaultProductProfileX(k,therapy){
     f.heatAblation?'Confirmed':engaged?'Engagement only':'Not assessed';
   return{kolId:k.id,therapy,relevant:relevant||engaged,strategic,experience,role:inferProductRoleX(k,therapy),fitScore:Number(k.productFitScore||0),relationship:k.currentRelationship||'Not assessed',priority:k.priority||'P4 - Monitor',nextAction:k.nextAction||'',engagedOnly:engaged&&!relevant};
 }
-function productProfileX(k,therapy){return{...defaultProductProfileX(k,therapy),...(productProfileOverrides[`${k.id}|${therapy}`]||{})};}
+function productProfileX(k,therapy){
+  const key=`${k.id}|${therapy}`;
+  if(productProfileCacheX.has(key))return productProfileCacheX.get(key);
+  const profile={...defaultProductProfileX(k,therapy),...(productProfileOverrides[key]||{})};
+  productProfileCacheX.set(key,profile);
+  return profile;
+}
 function allProductProfilesX(k){return Object.keys(THERAPY_META).map(t=>productProfileX(k,t));}
 function activeProductProfilesX(k){return allProductProfilesX(k).filter(p=>p.relevant);}
 function productBadgeX(p){const m=THERAPY_META[p.therapy]||{color:'#617084',bg:'#eef2f6',border:'#cbd5df'};return`<span class="product-badge" style="color:${m.color};background:${m.bg};border-color:${m.border}" title="${p.role}${p.strategic?' · Strategic':''}"><span class="mini-dot"></span>${p.therapy}${p.strategic?' ★':''}</span>`;}
@@ -16138,7 +16156,7 @@ function tierBadge(tier){
 }
 function countryFlag(country){
   const m=COUNTRY_META[country]||{color:"#888",flag:"🌏",bg:"rgba(136,136,136,.1)"};
-  return`<span class="cflag" style="background:${m.bg};border-color:${m.color}44;color:${m.color}">${m.flag||"🌏"} ${country}${m.name?` · ${m.name}`:""}</span>`;
+  return`<span class="cflag" style="background:${m.bg};border-color:${m.color}44;color:${m.color}">${country}${m.name?` · ${m.name}`:""}</span>`;
 }
 function countryText(country, weight=800){
   const m=COUNTRY_META[country]||{color:"#888"};
@@ -16310,6 +16328,7 @@ function saveInt(){
   if(allInt().some(i=>xInteractionKey(i)===xInteractionKey(candidate))){alert("This activity already exists for the same physician, date, type, and notes. Add the missing product tag to the existing record instead of counting it twice.");return;}
   extraInt.push(candidate);
   localStorage.setItem(EXTRA_INT_STORAGE_KEY,JSON.stringify(extraInt));
+  resetProductMatrixCacheX();
   closeModal();render();
 }
 
@@ -16325,7 +16344,7 @@ function openProductManagerX(kolId){
 function saveProductManagerX(kolId){
   const k=K(kolId);if(!k)return;
   Object.keys(THERAPY_META).forEach((therapy,i)=>{productProfileOverrides[`${kolId}|${therapy}`]={relevant:$(`ppm-rel-${i}`).checked,strategic:$(`ppm-str-${i}`).checked,experience:$(`ppm-exp-${i}`).value,role:$(`ppm-role-${i}`).value,fitScore:xClampScore($(`ppm-fit-${i}`).value),relationship:$(`ppm-relationship-${i}`).value.trim(),priority:$(`ppm-priority-${i}`).value,nextAction:$(`ppm-next-${i}`).value.trim()};});
-  localStorage.setItem(PRODUCT_PROFILE_STORAGE_KEY,JSON.stringify(productProfileOverrides));closeModal();render();
+  localStorage.setItem(PRODUCT_PROFILE_STORAGE_KEY,JSON.stringify(productProfileOverrides));resetProductMatrixCacheX();closeModal();render();
 }
 function openVolumeModalX(kolId,therapy='Y90'){
   const k=K(kolId);if(!k)return;
@@ -16339,7 +16358,7 @@ function saveVolumeLogX(kolId){
   const label=$("vol-label").value.trim(),source=$("vol-source").value.trim(),period=$("vol-period").value.trim();
   if(!label||!period||!source){alert('Please enter volume, period, and source.');return;}
   userVolumeLogs.push({id:`VOL-${Date.now()}`,kolId,therapy:$("vol-therapy").value,label,scope:$("vol-scope").value,period,trend:$("vol-trend").value,confidence:$("vol-confidence").value,lastVerified:$("vol-verified").value,source,imported:false});
-  localStorage.setItem(VOLUME_LOG_STORAGE_KEY,JSON.stringify(userVolumeLogs));closeModal();render();
+  localStorage.setItem(VOLUME_LOG_STORAGE_KEY,JSON.stringify(userVolumeLogs));resetProductMatrixCacheX();closeModal();render();
 }
 
 
@@ -17216,8 +17235,17 @@ function globalSearch(v){
 }
 function render(){
   const map={overview:renderOverview,registry:renderRegistry,productmatrix:renderProductMatrixX,profilex:renderProfileX,analyticsx:renderAnalyticsX,networkx:renderNetworkX,watchx:renderWatchX,territory:renderTerritory,interactions:renderInteractions,engagement:renderEngagement,insights:renderInsights};
-  $("page").innerHTML=(map[activeTab]||renderOverview)();
-  attachRowHover();
+  const page=$("page");
+  if(!page)return;
+  try{
+    const html=(map[activeTab]||renderOverview)();
+    if(typeof html!=="string")throw new Error("The page renderer did not return content.");
+    page.innerHTML=html;
+    attachRowHover();
+  }catch(error){
+    console.error(`Unable to render ${activeTab}`,error);
+    page.innerHTML=`<div class="fade-up"><div class="phdr"><div><div class="ph-title">Unable to open this page</div><div class="ph-sub">THE DATA IS SAFE · THE VIEW CAN BE RETRIED</div></div></div><div class="card" style="max-width:720px;border-left:4px solid var(--rose)"><div style="font-size:14px;font-weight:800;margin-bottom:7px">${activeTab==='productmatrix'?'Product Matrix could not finish loading.':'This section could not finish loading.'}</div><div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:14px">The interface caught a display error instead of leaving the page blank. Retry the view; if it persists, reopen this HTML file in a current version of Chrome or Edge.</div><button class="btn btn-ts" onclick="resetProductMatrixCacheX();render()">Retry Page</button><button class="btn btn-ghost" style="margin-left:6px" onclick="setTab('overview')">Back to Overview</button></div></div>`;
+  }
 }
 function attachRowHover(){
   document.querySelectorAll(".kol-row").forEach(row=>{
@@ -17227,15 +17255,28 @@ function attachRowHover(){
 }
 
 function renderProductMatrixX(){
+  const interactions=allInt();
+  const interactionsByKol=new Map();
+  interactions.forEach(i=>{
+    if(!interactionsByKol.has(i.kolId))interactionsByKol.set(i.kolId,[]);
+    interactionsByKol.get(i.kolId).push(i);
+  });
+  const matrixData=KOLS.map(k=>{
+    const profiles=activeProductProfilesX(k);
+    const physicianInteractions=interactionsByKol.get(k.id)||[];
+    const therapyCounts={};
+    profiles.forEach(p=>therapyCounts[p.therapy]=physicianInteractions.filter(i=>interactionProductTags(i).includes(p.therapy)).length);
+    return{k,profiles,physicianInteractions,therapyCounts,needs:profiles.some(p=>p.engagedOnly)};
+  });
   const coverage=productCoverageX(),duplicateGroups=duplicateAuditX(),review=outsideProductEngagementsX();
   const countries=['All',...new Set(KOLS.map(k=>k.country))];
   const therapyOptions=['All','Multi-product',...Object.keys(THERAPY_META)];
   const q=xNorm(matrixFilters.search);
-  const rows=KOLS.filter(k=>{
-    const active=activeProductProfilesX(k);
-    const therapyMatch=matrixFilters.therapy==='All'||(matrixFilters.therapy==='Multi-product'?active.length>1:active.some(p=>p.therapy===matrixFilters.therapy));
+  const rows=matrixData.filter(row=>{
+    const {k,profiles}=row;
+    const therapyMatch=matrixFilters.therapy==='All'||(matrixFilters.therapy==='Multi-product'?profiles.length>1:profiles.some(p=>p.therapy===matrixFilters.therapy));
     return therapyMatch&&(matrixFilters.country==='All'||k.country===matrixFilters.country)&&(!q||xNorm([xFullName(k),k.localName,k.inst,k.specialty,k.externalId].join(' ')).includes(q));
-  }).sort((a,b)=>activeProductProfilesX(b).length-activeProductProfilesX(a).length||a.valueRank-b.valueRank);
+  }).sort((a,b)=>b.profiles.length-a.profiles.length||a.k.valueRank-b.k.valueRank);
   const volumeLogs=allVolumeLogsX();
   const reviewPairs=[...new Map(review.map(x=>[`${x.k.id}|${x.therapy}`,x])).values()];
   return`<div class="fade-up">
@@ -17244,7 +17285,7 @@ function renderProductMatrixX(){
     <div class="g2" style="margin-bottom:16px"><div class="overlap-equation"><span>Y90 <b>${coverage.y90}</b></span><span>＋</span><span>Cryo <b>${coverage.cryo}</b></span><span>－</span><span>Overlap <b>${coverage.both}</b></span><span>＝</span><span>Unique KOLs <b>${coverage.unique}</b></span></div><div class="card" style="display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">${duplicateGroups.length?`<span class="audit-warn">⚠ ${duplicateGroups.length} potential duplicate group(s)</span>`:'<span class="audit-ok">✓ No exact duplicate physician records</span>'}<span class="audit-warn">↔ ${reviewPairs.length} cross-product activity pair(s) to review</span></div></div>
     <div class="watch-mini-note" style="margin-bottom:14px"><b>Counting rule:</b> A physician is counted once in the master total. Product counts may overlap. A meeting linked to several products is stored once and contributes once to overall engagement.</div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px"><input value="${escAttrX(matrixFilters.search)}" placeholder="Search physician, institution, KOL ID…" style="width:300px" oninput="matrixFilters.search=this.value;render()"><select onchange="matrixFilters.therapy=this.value;render()">${therapyOptions.map(v=>`<option ${matrixFilters.therapy===v?'selected':''}>${v}</option>`).join('')}</select><select onchange="matrixFilters.country=this.value;render()">${countries.map(v=>`<option ${matrixFilters.country===v?'selected':''}>${v==='All'?'All Countries':v}</option>`).join('')}</select><div style="margin-left:auto;color:var(--dim)">${rows.length} unique physicians</div></div>
-    <div style="overflow-x:auto;margin-bottom:18px"><div class="product-matrix-table"><div class="product-matrix-head"><div>PHYSICIAN / ID</div><div>MARKET</div><div>PRODUCT PROFILES</div><div>PRODUCT ROLES</div><div>ENGAGEMENTS</div><div>ACTIONS</div></div>${rows.map(k=>{const profiles=activeProductProfilesX(k),explicit=allInt().filter(i=>i.kolId===k.id),needs=profiles.some(p=>p.engagedOnly);return`<div class="product-matrix-row"><div style="display:flex;gap:9px;align-items:center">${av(k,34,10)}<div><b>${xFullName(k)}</b><div style="font-size:9px;color:var(--muted)">${k.inst||'—'}</div><div style="font-size:8px;color:var(--dim)">${k.externalId}</div></div></div><div>${countryText(k.country)}</div><div>${productBadgesX(k)}${needs?'<div class="audit-warn" style="margin-top:6px">Engagement-only profile</div>':''}</div><div>${profiles.map(p=>`<div style="font-size:9px;margin-bottom:3px"><b>${p.therapy}:</b> ${p.role}</div>`).join('')||'—'}</div><div><b>${explicit.length}</b> unique<div style="font-size:8px;color:var(--dim)">${profiles.map(p=>`${p.therapy} ${therapyEngagementsX(k.id,p.therapy).length}`).join(' · ')}</div></div><div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-ts btn-xs" onclick="profileKOLId=${k.id};setTab('profilex')">Profile</button><button class="btn btn-ghost btn-xs" onclick="openProductManagerX(${k.id})">Manage</button><button class="btn btn-gold btn-xs" onclick="openVolumeModalX(${k.id},'${profiles[0]?.therapy||'Y90'}')">＋ Volume</button></div></div>`}).join('')}</div></div>
+    <div style="overflow-x:auto;margin-bottom:18px"><div class="product-matrix-table"><div class="product-matrix-head"><div>PHYSICIAN / ID</div><div>COUNTRY</div><div>PRODUCT PROFILES</div><div>PRODUCT ROLES</div><div>ENGAGEMENTS</div><div>ACTIONS</div></div>${rows.map(({k,profiles,physicianInteractions,therapyCounts,needs})=>`<div class="product-matrix-row"><div style="display:flex;gap:9px;align-items:center">${av(k,34,10)}<div><b>${xFullName(k)}</b><div style="font-size:9px;color:var(--muted)">${k.inst||'—'}</div><div style="font-size:8px;color:var(--dim)">${k.externalId}</div></div></div><div>${countryText(k.country)}</div><div><div class="product-badges">${profiles.map(productBadgeX).join('')||'<span style="color:var(--dim)">Not assessed</span>'}</div>${needs?'<div class="audit-warn" style="margin-top:6px">Engagement-only profile</div>':''}</div><div>${profiles.map(p=>`<div style="font-size:9px;margin-bottom:3px"><b>${p.therapy}:</b> ${p.role}</div>`).join('')||'—'}</div><div><b>${physicianInteractions.length}</b> unique<div style="font-size:8px;color:var(--dim)">${profiles.map(p=>`${p.therapy} ${therapyCounts[p.therapy]||0}`).join(' · ')}</div></div><div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-ts btn-xs" onclick="profileKOLId=${k.id};setTab('profilex')">Profile</button><button class="btn btn-ghost btn-xs" onclick="openProductManagerX(${k.id})">Manage</button><button class="btn btn-gold btn-xs" onclick="openVolumeModalX(${k.id},'${profiles[0]?.therapy||'Y90'}')">＋ Volume</button></div></div>`).join('')}</div></div>
     <div class="g2"><div class="card"><div class="slabel">PROCEDURE VOLUME SIGNALS</div>${volumeLogs.slice(0,10).map(v=>{const k=K(v.kolId),m=THERAPY_META[v.therapy]||{color:'#617084'};return`<div class="volume-card"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>${k?xFullName(k):'Unknown KOL'}</b> · <span style="color:${m.color};font-weight:800">${v.therapy}</span></div><span>${v.confidence}</span></div><div class="volume-main">${v.label}</div><div class="volume-meta">${v.scope} · ${v.period} · ${v.trend} · ${v.source}</div></div>`}).join('')||'<div class="watch-mini-note">No procedure-volume records yet.</div>'}</div><div class="card"><div class="slabel">CROSS-PRODUCT REVIEW</div><div class="watch-mini-note" style="margin-bottom:9px">Activity outside the current strategic product classification is not automatically an error. Review whether it represents experience, a one-off engagement, or a new strategic profile.</div>${reviewPairs.slice(0,12).map(x=>`<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">${av(x.k,28,8)}<div style="flex:1"><b>${xFullName(x.k)}</b><div style="font-size:9px;color:var(--muted)">${x.therapy} activity · current focus ${x.k.portfolioFocus}</div></div><button class="btn btn-ghost btn-xs" onclick="openProductManagerX(${x.k.id})">Review</button></div>`).join('')||'<span class="audit-ok">✓ No cross-product classification mismatch</span>'}</div></div>
   </div>`;
 }
@@ -17271,7 +17312,7 @@ function renderOverview(){
     </div>
     <div class="g2" style="margin-bottom:16px">
       <div class="card"><div class="slabel">STRATEGIC PORTFOLIO COVERAGE</div>${Object.entries(portfolioBreakdown).map(([p,n])=>{const c=p==='Y90 + Cryo'?'var(--violet)':p==='Y90 only'?'var(--orange)':'var(--ts)';return`<div class="x-metric"><div class="x-metric-label">${p}</div><div><div style="display:flex;gap:8px;align-items:center"><span style="width:28px;font-size:10px;color:${c}">${n}</span><div class="x-bar" style="flex:1"><div class="x-bar-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${c}"></div></div></div></div></div>`}).join('')}</div>
-      <div class="card"><div class="slabel">KOL DISTRIBUTION BY MARKET</div>${Object.entries(countryBreakdown).sort((a,b)=>b[1]-a[1]).map(([c,n])=>{const m=COUNTRY_META[c]||{color:'#617084',flag:'🌏'};return`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;cursor:pointer" onclick="listFilters.country='${c}';setTab('registry')"><span style="width:72px;font-size:10px;font-weight:700;color:${m.color}">${m.flag} ${c}</span><div class="prog" style="flex:1;height:6px"><div class="prog-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${m.color}"></div></div><b style="width:24px;text-align:right;color:${m.color}">${n}</b></div>`}).join('')}</div>
+      <div class="card"><div class="slabel">KOL DISTRIBUTION BY COUNTRY</div>${Object.entries(countryBreakdown).sort((a,b)=>b[1]-a[1]).map(([c,n])=>{const m=COUNTRY_META[c]||{color:'#617084'};return`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;cursor:pointer" onclick="listFilters.country='${c}';setTab('registry')"><span style="width:72px;font-size:10px;font-weight:700;color:${m.color}">${c}</span><div class="prog" style="flex:1;height:6px"><div class="prog-fill" style="width:${Math.round(n/KOLS.length*100)}%;background:${m.color}"></div></div><b style="width:24px;text-align:right;color:${m.color}">${n}</b></div>`}).join('')}</div>
     </div>
     <div class="g2">
       <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="slabel" style="margin:0">PRIORITY &amp; ENGAGEMENT-GAP QUEUE</div><button class="btn btn-ghost btn-sm" onclick="setTab('registry')">Review all →</button></div>${priorityKols.map(k=>`<div style="display:flex;gap:9px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="profileKOLId=${k.id};setTab('profilex')">${av(k,30,9)}<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:11px">${xFullName(k)}</div><div style="font-size:9px;color:var(--muted)">${k.country} · ${k.portfolioFocus} · ${k.recommendedStrategy}</div></div><div style="text-align:right"><div style="font-weight:800;color:${k.priority.startsWith('P1')?'var(--rose)':'var(--gold)'}">${k.score}</div><div style="font-size:8px;color:var(--dim)">GAP ${k.engagementGap}</div></div></div>`).join('')}</div>
@@ -17302,8 +17343,8 @@ function renderRegistry(){
   return`<div class="fade-up"><div class="phdr"><div><div class="ph-title">KOL Registry</div><div class="ph-sub">${filtered.length} OF ${KOLS.length} KOLS · IO&amp;E APAC</div></div><div class="cta-row"><button class="btn btn-ts" onclick="openModal('interaction')">＋ Log Interaction</button><button class="btn btn-gold" onclick="resetKOLData()">Reset Imported Data</button></div></div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;align-items:center"><input placeholder="Search name, ID, account, specialty, expertise…" value="${escAttrX(listFilters.search)}" oninput="listFilters.search=this.value;render()" style="width:290px"/>${select(tiers,listFilters.tier,'All IO Tiers','listFilters.tier')}${select(countries,listFilters.country,'All Countries','listFilters.country')}${select(focus,listFilters.portfolio,'All Product Coverage','listFilters.portfolio')}${select(cryoCats,listFilters.cryo,'All Cryo Categories','listFilters.cryo')}${select(quadrants,listFilters.quadrant,'All Quadrants','listFilters.quadrant')}<select onchange="listFilters.type=this.value;render()"><option value="All">All KOL Types</option>${['Strategic Champion','External Influencer','Strategic Partner','Develop / Monitor'].map(v=>`<option ${listFilters.type===v?'selected':''}>${v}</option>`).join('')}</select><div style="margin-left:auto;font-size:10px;color:var(--dim)">${filtered.length} unique physicians</div></div>
     <div class="watch-mini-note" style="margin-bottom:14px"><b>One physician, multiple product profiles:</b> Product filters may return the same physician in different views, but the Registry stores and counts each KOL ID only once.</div>
-    <div style="overflow-x:auto"><div style="min-width:1580px"><div class="kol-thead" style="grid-template-columns:${cols}"><div>NAME / ID</div><div>MARKET</div><div>INSTITUTION / SPECIALTY</div><div>PRODUCT COVERAGE</div><div>WORKBOOK SEGMENT</div><div style="text-align:center">VALUE / GAP</div><div>PRIORITY</div><div style="text-align:center">KOL TYPE</div><div>ACTIONS</div></div>
-    ${filtered.map(k=>{const cm=COUNTRY_META[k.country]||{color:'#617084',flag:'🌏'};const pc=k.priority.startsWith('P1')?'var(--rose)':k.priority.startsWith('P2')?'var(--gold)':k.priority.startsWith('P3')?'var(--ts)':'var(--dim)';return`<div class="kol-row" style="grid-template-columns:${cols}" onclick="profileKOLId=${k.id};setTab('profilex')"><div style="display:flex;align-items:center;gap:9px">${av(k,34,10)}<div><div style="font-size:12px;font-weight:800">${xFullName(k)}</div>${k.localName?`<div style="font-size:9px;color:var(--muted)">${k.localName}</div>`:''}<div style="font-size:8px;color:var(--dim)">${k.externalId}</div></div></div><div style="color:${cm.color};font-weight:800">${cm.flag} ${k.country}</div><div><div style="font-size:11px;font-weight:650;white-space:normal;line-height:1.35">${k.inst||'—'}</div><div style="font-size:9px;color:var(--muted);margin-top:3px">${k.specialty||'—'}</div></div><div>${productBadgesX(k)}<div style="font-size:8px;color:var(--dim);margin-top:4px">${activeProductProfilesX(k).map(p=>p.role).join(' · ')}</div></div><div><div>${k.tier?tierBadge(k.tier):'<span style="color:var(--dim)">IO: —</span>'}</div><div style="font-size:9px;color:var(--muted);margin-top:4px">Cryo: ${k.cryoCategory||'—'} · Q${k.quadrant||'—'}</div></div><div style="display:flex;justify-content:center;gap:12px;text-align:center"><div><b style="font-size:20px;color:var(--violet)">${k.score}</b><div style="font-size:8px;color:var(--dim)">VALUE</div></div><div><b style="font-size:20px;color:${k.engagementGap>=25?'var(--rose)':'var(--ts)'}">${k.engagementGap}</b><div style="font-size:8px;color:var(--dim)">GAP</div></div></div><div><b style="font-size:10px;color:${pc}">${k.priority}</b><div style="font-size:8px;color:var(--dim);margin-top:4px">Rank #${k.valueRank}</div></div><div style="display:flex;justify-content:center">${kolTypeBadgeX(k)}</div><div class="row-acts" style="opacity:1" onclick="event.stopPropagation()"><button class="btn btn-ts btn-xs" onclick="openModal('interaction',${k.id})">＋ Log</button><button class="btn btn-ghost btn-xs" onclick="openProductManagerX(${k.id})">Products</button><button class="btn btn-ghost btn-xs" onclick="profileKOLId=${k.id};setTab('profilex')">Profile</button></div></div>`}).join('')}${filtered.length?'':'<div style="padding:50px;text-align:center;color:var(--dim)">No KOLs match these filters.</div>'}</div></div>
+    <div style="overflow-x:auto"><div style="min-width:1580px"><div class="kol-thead" style="grid-template-columns:${cols}"><div>NAME / ID</div><div>COUNTRY</div><div>INSTITUTION / SPECIALTY</div><div>PRODUCT COVERAGE</div><div>WORKBOOK SEGMENT</div><div style="text-align:center">VALUE / GAP</div><div>PRIORITY</div><div style="text-align:center">KOL TYPE</div><div>ACTIONS</div></div>
+    ${filtered.map(k=>{const cm=COUNTRY_META[k.country]||{color:'#617084'};const pc=k.priority.startsWith('P1')?'var(--rose)':k.priority.startsWith('P2')?'var(--gold)':k.priority.startsWith('P3')?'var(--ts)':'var(--dim)';return`<div class="kol-row" style="grid-template-columns:${cols}" onclick="profileKOLId=${k.id};setTab('profilex')"><div style="display:flex;align-items:center;gap:9px">${av(k,34,10)}<div><div style="font-size:12px;font-weight:800">${xFullName(k)}</div>${k.localName?`<div style="font-size:9px;color:var(--muted)">${k.localName}</div>`:''}<div style="font-size:8px;color:var(--dim)">${k.externalId}</div></div></div><div style="color:${cm.color};font-weight:800">${k.country}</div><div><div style="font-size:11px;font-weight:650;white-space:normal;line-height:1.35">${k.inst||'—'}</div><div style="font-size:9px;color:var(--muted);margin-top:3px">${k.specialty||'—'}</div></div><div>${productBadgesX(k)}<div style="font-size:8px;color:var(--dim);margin-top:4px">${activeProductProfilesX(k).map(p=>p.role).join(' · ')}</div></div><div><div>${k.tier?tierBadge(k.tier):'<span style="color:var(--dim)">IO: —</span>'}</div><div style="font-size:9px;color:var(--muted);margin-top:4px">Cryo: ${k.cryoCategory||'—'} · Q${k.quadrant||'—'}</div></div><div style="display:flex;justify-content:center;gap:12px;text-align:center"><div><b style="font-size:20px;color:var(--violet)">${k.score}</b><div style="font-size:8px;color:var(--dim)">VALUE</div></div><div><b style="font-size:20px;color:${k.engagementGap>=25?'var(--rose)':'var(--ts)'}">${k.engagementGap}</b><div style="font-size:8px;color:var(--dim)">GAP</div></div></div><div><b style="font-size:10px;color:${pc}">${k.priority}</b><div style="font-size:8px;color:var(--dim);margin-top:4px">Rank #${k.valueRank}</div></div><div style="display:flex;justify-content:center">${kolTypeBadgeX(k)}</div><div class="row-acts" style="opacity:1" onclick="event.stopPropagation()"><button class="btn btn-ts btn-xs" onclick="openModal('interaction',${k.id})">＋ Log</button><button class="btn btn-ghost btn-xs" onclick="openProductManagerX(${k.id})">Products</button><button class="btn btn-ghost btn-xs" onclick="profileKOLId=${k.id};setTab('profilex')">Profile</button></div></div>`}).join('')}${filtered.length?'':'<div style="padding:50px;text-align:center;color:var(--dim)">No KOLs match these filters.</div>'}</div></div>
   </div>`;
 }
 
@@ -17449,7 +17490,7 @@ function renderTerritory(){
   const countryGroups={};KOLS.forEach(k=>(countryGroups[k.country]??=[]).push(k));
   return`<div class="fade-up"><div class="phdr"><div><div class="ph-title">APAC Territory Map</div><div class="ph-sub">${Object.keys(countryGroups).length} MARKETS · PORTFOLIO COVERAGE · PRIORITY MIX</div></div><div class="cta-row"><button class="btn btn-ts" onclick="openModal('interaction')">＋ Log Interaction</button><button class="btn btn-ghost" onclick="setTab('registry')">Registry →</button></div></div>
     <div class="watch-mini-note" style="margin-bottom:16px"><b>Portfolio view:</b> Each market card separates Y90, Cryo, and cross-portfolio coverage and shows the top workbook-ranked profiles.</div>
-    <div class="g2">${Object.entries(countryGroups).sort((a,b)=>b[1].length-a[1].length).map(([country,kols])=>{const cm=COUNTRY_META[country]||{color:'#617084',flag:'🌏',name:country};const y90=kols.filter(k=>productProfileX(k,'Y90').strategic).length,cryo=kols.filter(k=>productProfileX(k,'Cryoablation').strategic).length,both=kols.filter(k=>productProfileX(k,'Y90').strategic&&productProfileX(k,'Cryoablation').strategic).length,p1=kols.filter(k=>k.priority.startsWith('P1')).length,avg=Math.round(kols.reduce((s,k)=>s+k.score,0)/kols.length),top=[...kols].sort((a,b)=>b.score-a.score).slice(0,4);return`<div class="card" style="border-color:${cm.color}55"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="font-size:30px">${cm.flag}</div><div style="flex:1"><div style="font-size:16px;font-weight:900;color:${cm.color}">${country} · ${cm.name||country}</div><div style="font-size:9px;color:var(--dim)">${kols[0]?.marketCluster||'APAC'} · Average value ${avg}</div></div><div style="font-size:26px;font-weight:900;color:${cm.color}">${kols.length}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"><span class="x-tag violet">Y90 + Cryo ${both}</span><span class="x-tag gold">Y90 ${y90}</span><span class="x-tag ts">Cryo ${cryo}</span>${p1?`<span class="x-tag" style="color:var(--rose)">P1 ${p1}</span>`:''}</div><div class="prog" style="height:6px;margin-bottom:12px"><div class="prog-fill" style="width:${avg}%;background:${cm.color}"></div></div>${top.map(k=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);cursor:pointer" onclick="event.stopPropagation();profileKOLId=${k.id};setTab('profilex')">${av(k,26,8)}<div style="flex:1"><b style="font-size:10px">${xFullName(k)}</b><div style="font-size:8px;color:var(--muted)">${activeProductProfilesX(k).map(p=>p.therapy).join(' + ')} · ${k.priority}</div></div><b style="color:var(--violet)">${k.score}</b></div>`).join('')}<button class="btn btn-ts btn-sm" style="width:100%;justify-content:center;margin-top:10px" onclick="listFilters.country='${country}';setTab('registry')">View ${kols.length} KOLs</button></div>`}).join('')}</div></div>`;
+    <div class="g2">${Object.entries(countryGroups).sort((a,b)=>b[1].length-a[1].length).map(([country,kols])=>{const cm=COUNTRY_META[country]||{color:'#617084',name:country};const y90=kols.filter(k=>productProfileX(k,'Y90').strategic).length,cryo=kols.filter(k=>productProfileX(k,'Cryoablation').strategic).length,both=kols.filter(k=>productProfileX(k,'Y90').strategic&&productProfileX(k,'Cryoablation').strategic).length,p1=kols.filter(k=>k.priority.startsWith('P1')).length,avg=Math.round(kols.reduce((s,k)=>s+k.score,0)/kols.length),top=[...kols].sort((a,b)=>b.score-a.score).slice(0,4);return`<div class="card" style="border-color:${cm.color}55"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="flex:1"><div style="font-size:16px;font-weight:900;color:${cm.color}">${country} · ${cm.name||country}</div><div style="font-size:9px;color:var(--dim)">${kols[0]?.marketCluster||'APAC'} · Average value ${avg}</div></div><div style="font-size:26px;font-weight:900;color:${cm.color}">${kols.length}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"><span class="x-tag violet">Y90 + Cryo ${both}</span><span class="x-tag gold">Y90 ${y90}</span><span class="x-tag ts">Cryo ${cryo}</span>${p1?`<span class="x-tag" style="color:var(--rose)">P1 ${p1}</span>`:''}</div><div class="prog" style="height:6px;margin-bottom:12px"><div class="prog-fill" style="width:${avg}%;background:${cm.color}"></div></div>${top.map(k=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border);cursor:pointer" onclick="event.stopPropagation();profileKOLId=${k.id};setTab('profilex')">${av(k,26,8)}<div style="flex:1"><b style="font-size:10px">${xFullName(k)}</b><div style="font-size:8px;color:var(--muted)">${activeProductProfilesX(k).map(p=>p.therapy).join(' + ')} · ${k.priority}</div></div><b style="color:var(--violet)">${k.score}</b></div>`).join('')}<button class="btn btn-ts btn-sm" style="width:100%;justify-content:center;margin-top:10px" onclick="listFilters.country='${country}';setTab('registry')">View ${kols.length} KOLs</button></div>`}).join('')}</div></div>`;
 }
 
 // ════════════════════════════════════════════════
@@ -17484,7 +17525,7 @@ function renderInteractions(){
         <div class="tl-hdr">
           ${av(k,26,8)}
           <span style="font-size:11px;font-weight:600;color:var(--text)">${xFullName(k)}</span>
-          <span style="font-size:10px;color:${COUNTRY_META[k.country]?.color||"#888"}">${COUNTRY_META[k.country]?.flag||""} ${k.country}</span>
+          <span style="font-size:10px;color:${COUNTRY_META[k.country]?.color||"#888"}">${k.country}</span>
           <span style="font-size:10px;color:var(--ts)">${interactionProductLabelX(i)} · ${i.type}</span>
           ${spill(i.outcome,oc)}
           <span style="font-size:9px;color:var(--dim);margin-left:auto">${i.year||i.date||'Unscheduled'} · ${i.owner}</span>
@@ -17597,7 +17638,7 @@ function renderInsights(){
     <div class="g4" style="margin-bottom:16px">${[['P1 Activate',p1.length,'var(--rose)'],['High-Value Gaps',gaps.length,'var(--gold)'],['Low Completeness',lowCompleteness,'var(--violet)'],['Imported Engagements',INTERACTIONS.length,'var(--ts)']].map(([l,v,c])=>`<div class="sbox"><div class="sbl">${l.toUpperCase()}</div><div class="sbv" style="color:${c}">${v}</div></div>`).join('')}</div>
     <div class="x-panel" style="margin-bottom:16px"><div class="slabel">ACTIVATION QUEUE — VALUE + ENGAGEMENT GAP</div><div class="g2">${(p1.length?p1:gaps).slice(0,8).map(k=>kolCard(k,k.engagementGap,'ENGAGEMENT GAP','var(--rose)')).join('')}</div></div>
     <div class="g2" style="margin-bottom:16px"><div class="x-panel"><div class="slabel">TOP EXTERNAL INFLUENCE</div><div class="g2">${topInfluence.map(k=>kolCard(k,k.influenceScore,'INFLUENCE','var(--violet)')).join('')}</div></div><div class="x-panel"><div class="slabel">TOP STRATEGIC PARTNERSHIP FIT</div><div class="g2">${topFit.map(k=>kolCard(k,xPartnershipFitScore(k),'PARTNERSHIP FIT','var(--ts)')).join('')}</div></div></div>
-    <div class="x-panel"><div class="slabel">MARKET &amp; PORTFOLIO COVERAGE</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr><th style="text-align:left;padding:8px;border-bottom:2px solid var(--bdr2)">Market</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Unique KOLs</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Y90 + Cryo</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Y90 strategic</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Cryo strategic</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">P1/P2</th><th style="text-align:left;padding:8px;border-bottom:2px solid var(--bdr2)">Planning signal</th></tr></thead><tbody>${countryRows.map(([c,list])=>{const both=list.filter(k=>productProfileX(k,'Y90').strategic&&productProfileX(k,'Cryoablation').strategic).length,y90=list.filter(k=>productProfileX(k,'Y90').strategic).length,cryo=list.filter(k=>productProfileX(k,'Cryoablation').strategic).length,high=list.filter(k=>k.priority.startsWith('P1')||k.priority.startsWith('P2')).length;const signal=!both&&y90&&cryo?'Cross-portfolio connector gap':!y90?'Y90 coverage gap':!cryo?'Cryo coverage gap':high?'Review activation/development queue':'Maintain and validate profiles';return`<tr onclick="listFilters.country='${c}';setTab('registry')" style="cursor:pointer"><td style="padding:8px;border-bottom:1px solid var(--border);font-weight:800">${COUNTRY_META[c]?.flag||'🌏'} ${c}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${list.length}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${both}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${y90}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${cryo}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${high}</td><td style="padding:8px;border-bottom:1px solid var(--border);color:var(--muted)">${signal}</td></tr>`}).join('')}</tbody></table></div></div>
+    <div class="x-panel"><div class="slabel">COUNTRY &amp; PORTFOLIO COVERAGE</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr><th style="text-align:left;padding:8px;border-bottom:2px solid var(--bdr2)">Country</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Unique KOLs</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Y90 + Cryo</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Y90 strategic</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">Cryo strategic</th><th style="text-align:right;padding:8px;border-bottom:2px solid var(--bdr2)">P1/P2</th><th style="text-align:left;padding:8px;border-bottom:2px solid var(--bdr2)">Planning signal</th></tr></thead><tbody>${countryRows.map(([c,list])=>{const both=list.filter(k=>productProfileX(k,'Y90').strategic&&productProfileX(k,'Cryoablation').strategic).length,y90=list.filter(k=>productProfileX(k,'Y90').strategic).length,cryo=list.filter(k=>productProfileX(k,'Cryoablation').strategic).length,high=list.filter(k=>k.priority.startsWith('P1')||k.priority.startsWith('P2')).length;const signal=!both&&y90&&cryo?'Cross-portfolio connector gap':!y90?'Y90 coverage gap':!cryo?'Cryo coverage gap':high?'Review activation/development queue':'Maintain and validate profiles';return`<tr onclick="listFilters.country='${c}';setTab('registry')" style="cursor:pointer"><td style="padding:8px;border-bottom:1px solid var(--border);font-weight:800">${c}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${list.length}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${both}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${y90}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${cryo}</td><td style="padding:8px;text-align:right;border-bottom:1px solid var(--border)">${high}</td><td style="padding:8px;border-bottom:1px solid var(--border);color:var(--muted)">${signal}</td></tr>`}).join('')}</tbody></table></div></div>
   </div>`;
 }
 
